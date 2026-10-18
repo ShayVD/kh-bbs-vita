@@ -4,44 +4,71 @@
   tools/unimpl_census.py build/pc/gen            # summary; exit 1 if anything is left
   tools/unimpl_census.py build/pc/gen --sites    # also one line per site
 
-Reads main_funcs_*.c only (the code of .text). Gated, so a non-zero count
-fails the run:
+Reads main_funcs_*.c only (the code of .text); exit 2 if there are none.
+Gated, so a non-zero count fails the run:
   - psp_unimplemented(...) sites, by mnemonic; unnamed encodings by raw word
-  - branches the emitter has no condition for ("0 /* unhandled branch */")
+  - branches the emitter has no condition for ("unhandled branch")
 Reported, not gated:
-  - static calls to code discovery never reached ("/* not discovered */")
+  - static targets discovery never reached: a call, a branch, or a fall into
+    a body owned by another function (all go through psp_dispatch)
+Every occurrence is counted; one the patterns cannot parse shows as <unparsed>
+rather than vanishing, so a change in the emitter's output cannot hide a site.
 """
 import argparse, collections, pathlib, re, sys
 
 # The comment the emitter writes before every instruction: address, mnemonic, operands.
 COMMENT = re.compile(r"/\* ([0-9A-F]{8})  (\S+)\s*(.*?) \*/")
-UNIMPL = re.compile(r'psp_unimplemented\(0x([0-9A-F]{8})u, "([^"]*)"\)')
-UNHANDLED = "0 /* unhandled branch */"
-UNDISCOVERED = re.compile(r"psp_dispatch\(0x([0-9A-F]{8})u\);  /\* not discovered \*/")
+UNIMPL_MARK = "psp_unimplemented("
+UNIMPL = re.compile(r'psp_unimplemented\(0x([0-9A-Fa-f]{1,8})u, "([^"]*)"\)')
+UNHANDLED_MARK = "unhandled branch"
+# psp_dispatch to a static target: tagged (a call, or a fall into another body),
+# or untagged inside a non-likely branch: `if (_c) { psp_dispatch(0x...u); return; }`.
+UNDISCOVERED = re.compile(r"psp_dispatch\(0x([0-9A-Fa-f]{1,8})u\);  /\* not discovered \*/")
+UNDISCOVERED_BRANCH = re.compile(r"if \(_c\) \{ psp_dispatch\(0x([0-9A-Fa-f]{1,8})u\);")
+FALLS_INTO = re.compile(r"/\* falls into 0x[0-9A-Fa-f]+, owned by another function \*/")
 KINDS = (("unimplemented", "unimplemented"), ("branch", "unhandled branches"),
-         ("undiscovered", "undiscovered static calls"))
+         ("undiscovered", "undiscovered static targets"))
+UNKNOWN = "????????"
 
 
-def scan(gen):
-    """Yield (kind, addr, what) for every site in gen/main_funcs_*.c. The
-    address is the instruction's, from the comment that precedes it."""
-    for path in sorted(pathlib.Path(gen).glob("main_funcs_*.c")):
-        last = ("????????", "?", "")
+def source_files(gen):
+    return sorted(pathlib.Path(gen).glob("main_funcs_*.c"))
+
+
+def scan(paths):
+    """Yield (kind, addr, what) for every site in the given files. An
+    unimplemented site carries its own address. A branch's is from the comment
+    that precedes it. A static target's is the target: the comment before it
+    is unreliable, because a delay slot's comment is written before the call."""
+    for path in paths:
+        last = (UNKNOWN, "?", "")       # the latest instruction comment
+        prev = ""                       # the latest non-blank line
         for line in path.read_text(errors="replace").splitlines():
             c = COMMENT.search(line)
             if c:
                 last = c.groups()
-                continue
-            u = UNIMPL.search(line)
-            if u:
-                what = u.group(2)
-                if what == "vfpu?" and last[1] == ".word":
-                    what = f"vfpu? {last[2]}"
-                yield "unimplemented", u.group(1), what
-            elif UNHANDLED in line:
-                yield "branch", last[0], last[1]
-            elif UNDISCOVERED.search(line):
-                yield "undiscovered", last[0], "call"
+            else:
+                parsed = 0
+                for u in UNIMPL.finditer(line):
+                    parsed += 1
+                    addr, what = u.group(1).upper().zfill(8), u.group(2)
+                    if last[1] == ".word" and last[0] == addr:
+                        what = f"{what} {last[2]}"
+                    yield "unimplemented", addr, what
+                for _ in range(line.count(UNIMPL_MARK) - parsed):
+                    yield "unimplemented", last[0], "<unparsed>"
+                for _ in range(line.count(UNHANDLED_MARK)):
+                    yield "branch", last[0], last[1]
+                d = UNDISCOVERED.search(line)
+                if d:
+                    what = "fallthrough" if FALLS_INTO.search(prev) else "call"
+                    yield "undiscovered", d.group(1).upper().zfill(8), what
+                else:
+                    b = UNDISCOVERED_BRANCH.search(line)
+                    if b:
+                        yield "undiscovered", b.group(1).upper().zfill(8), "branch"
+            if line.strip():
+                prev = line
 
 
 def main(argv=None):
@@ -53,18 +80,26 @@ def main(argv=None):
         print(f"{a.gen}: not a directory", file=sys.stderr)
         return 2
 
+    paths = source_files(a.gen)
+    if not paths:
+        print(f"{a.gen}: no main_funcs_*.c", file=sys.stderr)
+        return 2
+
     counts = {k: collections.Counter() for k, _ in KINDS}
     sites = []
-    for kind, addr, what in scan(a.gen):
+    for kind, addr, what in scan(paths):
         counts[kind][what] += 1
         sites.append((addr, kind, what))
 
+    print(f"files {len(paths)}")
     for kind, title in KINDS:
         print(f"{title} {sum(counts[kind].values())}")
         for what, n in counts[kind].most_common():
             print(f"  {what} {n}")
     if a.sites:
-        for addr, kind, what in sorted(sites):
+        def order(site):                # unknown addresses last
+            return (site[0] == UNKNOWN, 0 if site[0] == UNKNOWN else int(site[0], 16), site[1], site[2])
+        for addr, kind, what in sorted(sites, key=order):
             print(f"0x{addr} {kind} {what}")
     return 1 if sum(counts["unimplemented"].values()) + sum(counts["branch"].values()) else 0
 
