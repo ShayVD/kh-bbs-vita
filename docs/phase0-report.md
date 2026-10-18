@@ -36,7 +36,7 @@ quoted in each section.
   It does load nine plain-ELF **overlays** from `USRDIR/MODULE/` into a
   284,716-byte `.overlays` window at `0x08B8BF04`, and firmware AV modules
   through `sceUtilityLoadModule` (MPEG at least).
-- **Compiler**: the build is mostly C++ with an embedded Lua 5.1.2. The game
+- **Compiler** (superseded, see [toolchain.md](toolchain.md): it is SNC): the build is mostly C++ with an embedded Lua 5.1.2. The game
   code was assembled by a non-GNU assembler (98.6% of register moves are `or`,
   not GNU as's `addu`). crt0 reports compiler version `0x030306`. Taken
   together this points to SN Systems' toolchain (ProDG) rather than a stock
@@ -252,6 +252,11 @@ as `sceKernelLockMutexCB`, `sceKernelTryLockLwMutex_600`,
   from a trace.
 
 ## 3. Compiler fingerprints and leftover symbols
+
+> **Update (Phase 1 setup):** probe compiles settled the question differently
+> from the hypothesis below. The game code is **SNC** (pspsnc 1.2.7503.0 at
+> `-O2` matches all probes; psp-gcc does not). See [toolchain.md](toolchain.md).
+> The text below is kept as the Phase 0 record.
 
 **No symbols.** There is no `.symtab`. The only names are the import NIDs and the standard system export entry
 (two functions, by convention `module_start`/`module_stop`, plus module
