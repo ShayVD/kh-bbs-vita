@@ -18,7 +18,7 @@ jobs:
         run: tools/check_no_assets.sh
       - name: Tool scripts parse
         run: |
-          python3 -m py_compile tools/import_report.py tools/unimpl_census.py
+          python3 -m py_compile tools/import_report.py tools/unimpl_census.py tools/bbs_seeds.py
           bash -n tools/extract_game.sh tools/check_no_assets.sh
           python3 -m unittest discover -s tests/tools -v
 
