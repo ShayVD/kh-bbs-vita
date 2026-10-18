@@ -29,7 +29,10 @@ traces stay in build/ and are never committed.
   see the game's own code run. `0x35669D4C` should get a trivial
   implementation alongside.
 - Found on the way, for P4: psprecomp's sysmem heap starts at `0x08C00000`,
-  inside the game image `[0x08804018, 0x09F3D7D0)` (the first
-  `sceKernelAllocPartitionMemory` here landed at `0x09FC9000`, outside it, by
-  luck of placement). The fork needs an API to place the user partition
-  around the loaded image before allocations grow.
+  inside the game image `[0x08804018, 0x09F3D7D0)`. The one allocation in
+  this run (uid `0x10000` at `0x09FC9000`) was psprecomp's internal
+  `psp_sysmem_alloc(from_high)` for the `0x37000`-byte thread stack inside
+  `sceKernelCreateThread`, not a game `sceKernelAllocPartitionMemory`; it
+  lands outside the image only because it allocates from the top. Low
+  allocations from `0x08C00000` would overlap the image, so the fork needs an
+  API to place the user partition around the loaded image.

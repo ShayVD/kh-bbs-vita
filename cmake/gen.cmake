@@ -31,7 +31,9 @@ add_custom_command(
 
 add_library(khbbs_recomp STATIC ${KHBBS_GEN_SRCS})
 target_include_directories(khbbs_recomp PRIVATE "${KHBBS_GEN_DIR}")
-target_link_libraries(khbbs_recomp PUBLIC psprecomp)
+# khbbs_runtime provides psp_unimplemented; listing it here keeps single-pass
+# linkers (GNU ld on Vita) resolving it after the generated objects.
+target_link_libraries(khbbs_recomp PUBLIC khbbs_runtime psprecomp)
 # -ffp-contract=off keeps PSP float semantics (no fused multiply-add); -w
 # because generated code trips every unused-label/variable warning by design.
 target_compile_options(khbbs_recomp PRIVATE -O1 -ffp-contract=off -w)
