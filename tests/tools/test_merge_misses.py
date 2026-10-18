@@ -1,7 +1,9 @@
 """merge_misses.py on a synthetic miss log, bbs.toml and ELF. No game data."""
-import json, pathlib, subprocess, sys, tempfile, tomllib, unittest
+import contextlib, io, json, os, pathlib, shutil, subprocess, sys, tempfile, tomllib, unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "tools"))
+import merge_misses
 from elfgen import make_elf, words, SHF_ALLOC, SHF_EXECINSTR
 
 TOOL = pathlib.Path(__file__).resolve().parents[2] / "tools" / "merge_misses.py"
@@ -21,13 +23,17 @@ entries = [
 """
 
 
-def miss(t, ra=0x08804010):
-    return json.dumps({"seq": 0, "target": f"0x{t:08X}", "ra": f"0x{ra:08X}", "sp": "0x0", "last": None})
+def miss(t, ra=0x08804010, order=0, stepped=False, seq=0, last="null"):
+    """One log line, laid out exactly as runtime/misslog.c writes it
+    (tests/runtime/test_misslog.c checks the C side against the same text)."""
+    return (f'{{"seq":{seq},"order":{order},"stepped":{"true" if stepped else "false"},'
+            f'"target":"0x{t:08X}","ra":"0x{ra:08X}","sp":"0x083FFFC0","last":{last}}}')
 
 
 class MergeBase(unittest.TestCase):
     def setUp(self):
         self.dir = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
 
     def run_tool(self, log, toml=TOML, elf=ELF, extra=()):
         """log: list of lines or raw bytes; toml: str or bytes. Returns the
@@ -97,10 +103,100 @@ class MergeMisses(MergeBase):
         self.assertTrue(after.startswith(h) and after.endswith(t), after)
         self.assertEqual(after[len(h):-len(t)], b"    0x08804060,  # miss, ra 0x08804010\r\n")
 
-    def test_without_elf_nothing_is_filtered_on_range(self):
-        r, after = self.run_tool([miss(0x0BAD0000)], elf=None)
+    def run_main(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = merge_misses.main(argv)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_default_elf_is_used_when_none_is_given(self):
+        (self.dir / "bbs.toml").write_text(TOML)
+        (self.dir / "m.jsonl").write_text(miss(0x0BAD0000) + "\n" + miss(0x08804060) + "\n")
+        (self.dir / "e.elf").write_bytes(ELF)
+        old = merge_misses.DEFAULT_ELF
+        merge_misses.DEFAULT_ELF = self.dir / "e.elf"
+        self.addCleanup(setattr, merge_misses, "DEFAULT_ELF", old)
+        rc, out, err = self.run_main([str(self.dir / "m.jsonl"), "--toml", str(self.dir / "bbs.toml")])
+        self.assertEqual(rc, 0, err)
+        text = (self.dir / "bbs.toml").read_text()
+        self.assertIn("0x08804060", text)
+        self.assertNotIn("0x0BAD0000", text)      # a wild target never reaches bbs.toml
+        self.assertIn("0x0BAD0000", out)
+
+    def test_default_elf_missing_is_refused(self):
+        (self.dir / "bbs.toml").write_text(TOML)
+        (self.dir / "m.jsonl").write_text(miss(0x0BAD0000) + "\n")
+        old = merge_misses.DEFAULT_ELF
+        merge_misses.DEFAULT_ELF = self.dir / "no" / "EBOOT.dec.ELF"
+        self.addCleanup(setattr, merge_misses, "DEFAULT_ELF", old)
+        rc, out, err = self.run_main([str(self.dir / "m.jsonl"), "--toml", str(self.dir / "bbs.toml")])
+        self.assertEqual(rc, 1)
+        self.assertEqual(len(err.strip().splitlines()), 1, err)
+        self.assertIn("--elf", err)
+        self.assertEqual((self.dir / "bbs.toml").read_text(), TOML)
+
+    def test_default_elf_path_is_the_repos_game_dir(self):
+        self.assertEqual(merge_misses.DEFAULT_ELF,
+                         pathlib.Path(__file__).resolve().parents[2] / "game" / "EBOOT.dec.ELF")
+
+    def test_only_first_misses_are_merged_unless_all(self):
+        # A run: 0x...60 first, then 0x...C0 after a stepped-over miss. Another run
+        # misses 0x...A0 first.
+        log = [miss(0x08804060, stepped=True), miss(0x088040C0, order=1, seq=1),
+               miss(0x088040A0, order=0, seq=2)]
+        r, after = self.run_tool(log)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn(b"0x0BAD0000", after)
+        self.assertEqual(tomllib.loads(after.decode())["discovery"]["entries"],
+                         [0x08804040, 0x08804060, 0x08804080, 0x088040A0])
+        self.assertIn("skipped (after a stepped-over miss, rerun to confirm): 0x088040C0", r.stdout)
+        r, after = self.run_tool(log, extra=["--all"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(tomllib.loads(after.decode())["discovery"]["entries"],
+                         [0x08804040, 0x08804060, 0x08804080, 0x088040A0, 0x088040C0])
+        self.assertNotIn("skipped", r.stdout)
+
+    def test_a_target_trusted_in_any_run_is_merged(self):
+        # order 1 in one run, order 0 in another: the second run vouches for it.
+        r, after = self.run_tool([miss(0x08804060, order=2), miss(0x08804060, order=0, ra=0x08804020)])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(b"0x08804060,  # miss, ra 0x08804020", after)
+
+    def test_already_listed_target_is_reported(self):
+        r, after = self.run_tool([miss(0x08804040), miss(0x08804080)])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("already listed but still missed: 0x08804040 (stale build?)", r.stdout)
+        self.assertIn("already listed but still missed: 0x08804080 (stale build?)", r.stdout)
+        self.assertEqual(after, self.raw)
+
+    def test_real_log_line_with_a_last_function(self):
+        line = ('{"seq":3,"order":0,"stepped":false,"target":"0x08804060","ra":"0x08A8BE28",'
+                '"sp":"0x083FFFC0","last":"0x08A8BD58"}')
+        r, after = self.run_tool([line])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(b"0x08804060,  # miss, ra 0x08A8BE28", after)
+
+    def test_symlinked_bbs_toml_is_written_through(self):
+        real = self.dir / "real.toml"
+        link = self.dir / "link.toml"
+        real.write_text(TOML)
+        link.symlink_to(real)
+        (self.dir / "m.jsonl").write_text(miss(0x08804060) + "\n")
+        (self.dir / "e.elf").write_bytes(ELF)
+        rc, out, err = self.run_main([str(self.dir / "m.jsonl"), "--toml", str(link), "--elf", str(self.dir / "e.elf")])
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(link.is_symlink())
+        self.assertIn("0x08804060", real.read_text())
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()),
+                         ["e.elf", "link.toml", "m.jsonl", "real.toml"])
+
+    def test_file_mode_is_kept(self):
+        (self.dir / "bbs.toml").write_text(TOML)
+        os.chmod(self.dir / "bbs.toml", 0o640)
+        (self.dir / "m.jsonl").write_text(miss(0x08804060) + "\n")
+        (self.dir / "e.elf").write_bytes(ELF)
+        rc, out, err = self.run_main([str(self.dir / "m.jsonl"), "--toml", str(self.dir / "bbs.toml"), "--elf", str(self.dir / "e.elf")])
+        self.assertEqual(rc, 0, err)
+        self.assertEqual((self.dir / "bbs.toml").stat().st_mode & 0o777, 0o640)
 
     def test_outside_code_reported_not_added(self):
         r, after = self.run_tool([miss(0x0BAD0000)])
@@ -110,7 +206,7 @@ class MergeMisses(MergeBase):
         self.assertEqual(after, self.raw)
 
     def test_misaligned_reported_not_added(self):
-        r, after = self.run_tool([miss(0x08804062)], elf=None)
+        r, after = self.run_tool([miss(0x08804062)])
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn(b"0x08804062", after)
         self.assertIn("0x08804062", r.stdout)
@@ -184,6 +280,12 @@ class MergeRefusals(MergeBase):
                 self.assertRefused(r, after, "'target'")
         r, after = self.run_tool([json.dumps({"ra": "0x1"})])
         self.assertRefused(r, after, "'target'")
+
+    def test_order_and_stepped_must_have_their_types(self):
+        for bad in ({"order": -1}, {"order": "0"}, {"order": True}, {"stepped": "yes"}, {"stepped": 1}):
+            with self.subTest(bad=bad):
+                r, after = self.run_tool([json.dumps({"target": "0x08804060", "ra": "0x1", **bad})])
+                self.assertRefused(r, after, "m.jsonl:1")
 
     def test_ra_cannot_smuggle_text_into_the_comment(self):
         r, after = self.run_tool([json.dumps({"target": "0x08804060", "ra": "0x1\n[evil]"})])

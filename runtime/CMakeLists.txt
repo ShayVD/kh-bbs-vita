@@ -1,5 +1,6 @@
 # Platform-free runtime: no OS, window or GPU headers here (docs/architecture.md).
 add_library(khbbs_runtime STATIC
+    args.c
     loader.c
     trace.c
     misslog.c
