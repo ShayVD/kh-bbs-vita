@@ -19,8 +19,8 @@ entries = [
 # function entry. A table is a whole section, or `addr` + `count`.
 
 [[discovery.tables]]
-# 100 static constructors as (function, 0) pairs, run by crt0. .ctors is
-# empty in this game. The data-pointer scan already finds 99 of them (the
-# 100th slot is null); listing the table makes that independent of the scan.
+# 100 (function, 0) slots holding 99 constructors; the last slot is null.
+# crt0 runs them. .ctors is empty in this game. The data-pointer scan
+# already finds all 99; listing the table makes that independent of the scan.
 section = ".cplinit"
 stride = 8
