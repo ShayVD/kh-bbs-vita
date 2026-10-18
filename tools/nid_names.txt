@@ -1,0 +1,26 @@
+# Extra firmware function names for tools/import_report.py (--names).
+# Each line is a name; it is only used when SHA-1(name)[0:4] matches the NID.
+# A line "NID name" pins a name to a NID that is not SHA-1 based (6.x firmware);
+# such names are descriptive and marked with a trailing '?' in the report.
+sceKernelCreateMutex
+sceKernelDeleteMutex
+sceKernelLockMutex
+sceKernelLockMutexCB
+sceKernelTryLockMutex
+sceKernelUnlockMutex
+sceKernelLockLwMutexCB
+sceKernelTryLockLwMutex_600
+sceKernelMemcpy
+sceMpegAvcCsc
+sceMpegAvcDecodeStopYCbCr
+sceMpegAvcDecodeYCbCr
+sceMpegAvcInitYCbCr
+sceMpegAvcQueryYCbCrSize
+scePowerGetPllClockFrequencyInt
+sceUtilityGamedataInstallAbort
+sceUtilityGamedataInstallGetStatus
+sceUtilityGamedataInstallInitStart
+sceUtilityGamedataInstallShutdownStart
+sceUtilityGamedataInstallUpdate
+# Not SHA-1 based. Role taken from the call site in this game, not a confirmed name.
+0x35669D4C SysMemUserForUser_35669D4C(SetCompiledSdkVersion,crt0)
