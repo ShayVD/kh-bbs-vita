@@ -12,7 +12,10 @@ tools/extract_game.sh ~/Games/dumps/kh-bbs/"Kingdom Hearts - Birth by Sleep (USA
 ```
 
 The first fetches and checks (SHA-256) the compilers, clones and builds the
-pinned third-party tools. The second extracts and decrypts the modules and
+pinned third-party tools. Parts can be run alone:
+`tools/setup_toolchain.sh compilers`, `clones` (both clones below),
+`psprecomp` or `pspdecrypt` (one clone each, cloned and built). CI uses
+`psprecomp` only, since the runtime tests need nothing else. The second extracts and decrypts the modules and
 checks them against [`tools/target.sha1`](../tools/target.sha1).
 
 ## Third-party clones (`third_party/`, gitignored)
@@ -29,7 +32,7 @@ together.
 pspdecrypt links Homebrew's prebuilt `openssl@3` (already installed); the
 script finds it with `brew --prefix openssl@3`.
 
-Our changes to psprecomp live on the fork's `khbbs` branch: commit there, push, then bump the pin here and in the script. The clone's `upstream` remote is sp00nznet/psprecomp.
+Our changes to psprecomp live on the fork's `khbbs` branch: commit there, push, then bump the pin here and in the script. The script adds an `upstream` remote (github.com/sp00nznet/psprecomp) to the clone when it is missing.
 
 ## Compilers (`tools/toolchain/`, gitignored)
 

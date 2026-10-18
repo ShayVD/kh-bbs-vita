@@ -29,7 +29,7 @@ jobs:
       - name: Ninja
         run: command -v ninja || brew install ninja
       - name: Fetch pinned psprecomp fork
-        run: tools/setup_toolchain.sh clones
+        run: tools/setup_toolchain.sh psprecomp
       - name: Build runtime and tests
         run: |
           cmake -S . -B build/ci -G Ninja -DKHBBS_WITH_GAME=OFF
