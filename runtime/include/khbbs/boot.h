@@ -15,7 +15,7 @@ typedef enum {
 typedef struct {
     khbbs_stop why;
     uint32_t   addr;       /* the missed target, for KHBBS_DISPATCH_MISS */
-    uint64_t   calls;      /* psp_dispatch_calls() at the stop */
+    uint64_t   calls;      /* dispatches made, including the entry dispatch */
 } khbbs_result;
 
 /* `budget` caps indirect dispatches (0 = unlimited). The module gets
@@ -25,6 +25,7 @@ typedef struct {
  * On return (any path) the dispatch budget is cleared and the miss handler is
  * reset to psprecomp's default; a handler installed by the host beforehand is
  * not preserved (psprecomp has no getter).
+ * NULL img or path gives KHBBS_BAD_ARGS. The trace (if open) is flushed on return.
  * `path` must be at most KHBBS_BOOT_PATH_MAX bytes. */
 #define KHBBS_BOOT_PATH_MAX 255
 khbbs_result khbbs_boot(const khbbs_image *img, const char *path, uint64_t budget);

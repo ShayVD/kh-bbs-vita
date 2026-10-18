@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <signal.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -56,11 +57,16 @@ int main(void) {
     /* After boot our longjmp handler must be gone: a miss now takes psprecomp's
      * default path (abort), not a longjmp into a dead jmp_buf. */
     img.entry = 0x08804200u;
-    r = khbbs_boot(&img, path, 0);
+    r = khbbs_boot(&img, path, 0);   /* installs then must remove its handler */
+    CHECK(r.calls >= 1, "unlimited run still counts calls");
+    CHECK(khbbs_boot(NULL, path, 0).why == KHBBS_BAD_ARGS, "NULL img");
+    CHECK(khbbs_boot(&img, NULL, 0).why == KHBBS_BAD_ARGS, "NULL path");
     fflush(NULL);
     pid_t pid = fork();
     if (pid == 0) {
-        freopen("/dev/null", "w", stderr);
+        struct rlimit nocore = {0, 0};
+        setrlimit(RLIMIT_CORE, &nocore);   /* abort() must not leave a core file */
+        if (!freopen("/dev/null", "w", stderr)) _exit(2);
         psp_dispatch(0x0BAD0000u);
         _exit(0);
     }

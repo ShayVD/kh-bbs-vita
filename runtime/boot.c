@@ -1,9 +1,11 @@
 #include "khbbs/boot.h"
+#include "khbbs/trace.h"
 #include "psprecomp/cpu.h"
 #include "psprecomp/dispatch.h"
 #include "psprecomp/mem.h"
 
 #include <setjmp.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -29,6 +31,11 @@ static void on_budget(void) {
 
 khbbs_result khbbs_boot(const khbbs_image *img, const char *path, uint64_t budget) {
     memset(&g_res, 0, sizeof g_res);
+    if (!img || !path) {
+        fprintf(stderr, "khbbs: boot called with NULL image or path\n");
+        g_res.why = KHBBS_BAD_ARGS;
+        return g_res;
+    }
     size_t n = strlen(path) + 1;
     void *dst = n <= KHBBS_BOOT_PATH_MAX + 1 ? psp_mem_ptr(BOOT_ARGP, (uint32_t)n) : NULL;
     if (!dst) {
@@ -46,8 +53,10 @@ khbbs_result khbbs_boot(const khbbs_image *img, const char *path, uint64_t budge
     psp_cpu.r[PSP_REG_GP] = img->gp;
     psp_cpu.r[PSP_REG_RA] = 0;
     psp_set_miss_handler(on_miss);
-    /* Always set: budget 0 also clears a limit left by an earlier boot. */
-    psp_dispatch_set_budget(budget, on_budget);
+    /* psp_dispatch only counts while a budget is armed, so "unlimited" arms
+     * UINT64_MAX (never reached) to keep result.calls meaningful. Always set:
+     * this also clears a limit left by an earlier boot. */
+    psp_dispatch_set_budget(budget ? budget : UINT64_MAX, on_budget);
 
     if (setjmp(g_stop) == 0) {
         psp_dispatch(img->entry);
@@ -59,6 +68,7 @@ khbbs_result khbbs_boot(const khbbs_image *img, const char *path, uint64_t budge
      * restored; NULL restores its default (report and abort). */
     psp_set_miss_handler(NULL);
     psp_dispatch_set_budget(0, NULL);
+    khbbs_trace_flush();
     return g_res;
 }
 
