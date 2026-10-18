@@ -6,7 +6,10 @@
 #include "psprecomp/mem.h"
 
 #include <stdio.h>
+#include <signal.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 static int failures;
 #define CHECK(c, m) do { if (!(c)) { printf("FAIL %s\n", m); failures++; } } while (0)
@@ -49,6 +52,21 @@ int main(void) {
     longpath[sizeof longpath - 1] = 0;
     r = khbbs_boot(&img, longpath, 0);
     CHECK(r.why == KHBBS_BAD_ARGS, "overlong path rejected");
+
+    /* After boot our longjmp handler must be gone: a miss now takes psprecomp's
+     * default path (abort), not a longjmp into a dead jmp_buf. */
+    img.entry = 0x08804200u;
+    r = khbbs_boot(&img, path, 0);
+    fflush(NULL);
+    pid_t pid = fork();
+    if (pid == 0) {
+        freopen("/dev/null", "w", stderr);
+        psp_dispatch(0x0BAD0000u);
+        _exit(0);
+    }
+    int st = 0;
+    waitpid(pid, &st, 0);
+    CHECK(WIFSIGNALED(st) && WTERMSIG(st) == SIGABRT, "default miss handler restored after boot");
 
     printf("%s\n", failures ? "test_boot: FAILED" : "test_boot: ok");
     return failures ? 1 : 0;

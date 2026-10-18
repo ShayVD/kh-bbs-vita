@@ -20,7 +20,11 @@ typedef struct {
 
 /* `budget` caps indirect dispatches (0 = unlimited). The module gets
  * module_start(argc, argp) with argp = `path` placed in guest memory.
- * Guest memory (psp_mem_init) must already be set up.
+ * psp_mem_init() must be called before khbbs_boot. A budget of N counts the
+ * entry dispatch itself, so it allows N-1 further indirect dispatches.
+ * On return (any path) the dispatch budget is cleared and the miss handler is
+ * reset to psprecomp's default; a handler installed by the host beforehand is
+ * not preserved (psprecomp has no getter).
  * `path` must be at most KHBBS_BOOT_PATH_MAX bytes. */
 #define KHBBS_BOOT_PATH_MAX 255
 khbbs_result khbbs_boot(const khbbs_image *img, const char *path, uint64_t budget);

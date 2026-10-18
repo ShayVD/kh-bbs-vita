@@ -54,6 +54,11 @@ khbbs_result khbbs_boot(const khbbs_image *img, const char *path, uint64_t budge
         g_res.why = KHBBS_RETURNED;
     }
     g_res.calls = psp_dispatch_calls();
+    /* on_miss/on_budget longjmp into g_stop, which is dead once we return.
+     * psprecomp has no getter, so the previous miss handler cannot be
+     * restored; NULL restores its default (report and abort). */
+    psp_set_miss_handler(NULL);
+    psp_dispatch_set_budget(0, NULL);
     return g_res;
 }
 
