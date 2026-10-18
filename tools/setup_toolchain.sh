@@ -5,7 +5,9 @@
 #
 #   tools/setup_toolchain.sh            all of it
 #   tools/setup_toolchain.sh compilers  only tools/toolchain/
-#   tools/setup_toolchain.sh clones     only third_party/
+#   tools/setup_toolchain.sh clones     only third_party/ (psprecomp and pspdecrypt)
+#   tools/setup_toolchain.sh psprecomp  only clone and build third_party/psprecomp
+#   tools/setup_toolchain.sh pspdecrypt only clone and build third_party/pspdecrypt
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -52,33 +54,44 @@ EOF
   echo "ok: compilers in tools/toolchain/"
 }
 
-clone() {  # url dir commit
-  local url=$1 dir=$root/third_party/$2 commit=$3
+clone() {  # url dir commit [upstream-url]
+  local url=$1 dir=$root/third_party/$2 commit=$3 upstream=${4:-}
+  mkdir -p "$root/third_party"
   if [[ ! -d "$dir/.git" ]]; then git clone -q "$url" "$dir"; fi
+  if [[ -n "$upstream" ]] && ! git -C "$dir" remote get-url upstream >/dev/null 2>&1; then
+    git -C "$dir" remote add upstream "$upstream"
+  fi
   if [[ "$(git -C "$dir" rev-parse HEAD)" != "$commit"* ]]; then
-    git -C "$dir" fetch -q origin "$commit" 2>/dev/null || git -C "$dir" fetch -q --unshallow origin || true
+    git -C "$dir" fetch -q origin "$commit" 2>/dev/null || git -C "$dir" fetch -q --unshallow origin 2>/dev/null || true
     git -C "$dir" checkout -q "$commit"
   fi
   echo "ok: third_party/$2 at $(git -C "$dir" rev-parse --short HEAD)"
 }
 
-clones() {
-  mkdir -p "$root/third_party"
-  # Pinned commits; bump them here and in docs/setup.md together.
-  clone https://github.com/sp00nznet/psprecomp psprecomp caca759
-  clone https://github.com/John-K/pspdecrypt pspdecrypt c156627
+# Pinned commits; bump them here and in docs/setup.md together.
+psprecomp() {
+  # Our fork (branch khbbs) of github.com/sp00nznet/psprecomp, based on caca759.
+  clone https://github.com/ShayVD/psprecomp psprecomp b925bd2 https://github.com/sp00nznet/psprecomp
   cmake -S "$root/third_party/psprecomp" -B "$root/third_party/psprecomp/build" >/dev/null
   cmake --build "$root/third_party/psprecomp/build" >/dev/null
   echo "ok: psprecomp built"
+}
+
+pspdecrypt() {
+  clone https://github.com/John-K/pspdecrypt pspdecrypt c156627
   local ssl; ssl=$(brew --prefix openssl@3 2>/dev/null || echo /usr)
   make -s -C "$root/third_party/pspdecrypt" -j8 \
     CFLAGS="-O2 -I$ssl/include" CXXFLAGS="-O2 -std=c++11 -I$ssl/include" EXTRA_FLAG="-L$ssl/lib"
   echo "ok: pspdecrypt built"
 }
 
+clones() { psprecomp; pspdecrypt; }
+
 case $what in
   all) compilers; clones ;;
   compilers) compilers ;;
   clones) clones ;;
-  *) echo "usage: $0 [all|compilers|clones]" >&2; exit 2 ;;
+  psprecomp) psprecomp ;;
+  pspdecrypt) pspdecrypt ;;
+  *) echo "usage: $0 [all|compilers|clones|psprecomp|pspdecrypt]" >&2; exit 2 ;;
 esac
