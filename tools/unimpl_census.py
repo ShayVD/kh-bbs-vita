@@ -17,7 +17,7 @@ rather than vanishing, so a change in the emitter's output cannot hide a site.
 import argparse, collections, pathlib, re, sys
 
 # The comment the emitter writes before every instruction: address, mnemonic, operands.
-COMMENT = re.compile(r"/\* ([0-9A-F]{8})  (\S+)\s*(.*?) \*/")
+COMMENT = re.compile(r"/\* ([0-9A-F]{8})  (\S+)\s*(.*?)\s*\*/")
 UNIMPL_MARK = "psp_unimplemented("
 UNIMPL = re.compile(r'psp_unimplemented\(0x([0-9A-Fa-f]{1,8})u, "([^"]*)"\)')
 UNHANDLED_MARK = "unhandled branch"
@@ -35,40 +35,45 @@ def source_files(gen):
     return sorted(pathlib.Path(gen).glob("main_funcs_*.c"))
 
 
-def scan(paths):
+def scan(paths, bare=None):
     """Yield (kind, addr, what) for every site in the given files. An
     unimplemented site carries its own address. A branch's is from the comment
     that precedes it. A static target's is the target: the comment before it
-    is unreliable, because a delay slot's comment is written before the call."""
+    is unreliable, because a delay slot's comment is written before the call.
+    A file with no instruction comment at all is appended to `bare`."""
     for path in paths:
         last = (UNKNOWN, "?", "")       # the latest instruction comment
         prev = ""                       # the latest non-blank line
+        seen = False
         for line in path.read_text(errors="replace").splitlines():
             c = COMMENT.search(line)
             if c:
+                seen = True
                 last = c.groups()
+                line = line[:c.start()] + line[c.end():]    # sites may share its line
+            parsed = 0
+            for u in UNIMPL.finditer(line):
+                parsed += 1
+                addr, what = u.group(1).upper().zfill(8), u.group(2)
+                if last[1] == ".word" and last[0] == addr:
+                    what = f"{what} {last[2]}"
+                yield "unimplemented", addr, what
+            for _ in range(line.count(UNIMPL_MARK) - parsed):
+                yield "unimplemented", last[0], "<unparsed>"
+            for _ in range(line.count(UNHANDLED_MARK)):
+                yield "branch", last[0], last[1]
+            d = UNDISCOVERED.search(line)
+            if d:
+                what = "fallthrough" if FALLS_INTO.search(prev) else "call"
+                yield "undiscovered", d.group(1).upper().zfill(8), what
             else:
-                parsed = 0
-                for u in UNIMPL.finditer(line):
-                    parsed += 1
-                    addr, what = u.group(1).upper().zfill(8), u.group(2)
-                    if last[1] == ".word" and last[0] == addr:
-                        what = f"{what} {last[2]}"
-                    yield "unimplemented", addr, what
-                for _ in range(line.count(UNIMPL_MARK) - parsed):
-                    yield "unimplemented", last[0], "<unparsed>"
-                for _ in range(line.count(UNHANDLED_MARK)):
-                    yield "branch", last[0], last[1]
-                d = UNDISCOVERED.search(line)
-                if d:
-                    what = "fallthrough" if FALLS_INTO.search(prev) else "call"
-                    yield "undiscovered", d.group(1).upper().zfill(8), what
-                else:
-                    b = UNDISCOVERED_BRANCH.search(line)
-                    if b:
-                        yield "undiscovered", b.group(1).upper().zfill(8), "branch"
+                b = UNDISCOVERED_BRANCH.search(line)
+                if b:
+                    yield "undiscovered", b.group(1).upper().zfill(8), "branch"
             if line.strip():
                 prev = line
+        if not seen and bare is not None:
+            bare.append(path)
 
 
 def main(argv=None):
@@ -87,9 +92,14 @@ def main(argv=None):
 
     counts = {k: collections.Counter() for k, _ in KINDS}
     sites = []
-    for kind, addr, what in scan(paths):
+    bare = []
+    for kind, addr, what in scan(paths, bare):
         counts[kind][what] += 1
         sites.append((addr, kind, what))
+    if bare:
+        for path in bare:
+            print(f"{path}: no instruction comments (truncated?)", file=sys.stderr)
+        return 2
 
     print(f"files {len(paths)}")
     for kind, title in KINDS:

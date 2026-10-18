@@ -53,6 +53,8 @@ def gen(files):
 
 class Census(unittest.TestCase):
     def lines(self, text, *args):
+        if "/* 0" not in text:          # a real file always has instruction comments
+            text = "    /* 08800000  nop */\n" + text
         with gen({"main_funcs_000.c": text}) as d:
             r = run(d, *args)
         return r.returncode, r.stdout.splitlines(), r
@@ -107,6 +109,20 @@ class Census(unittest.TestCase):
             r = run(d)
         self.assertEqual(r.returncode, 2, r.stdout)
         self.assertIn("no main_funcs_*.c", r.stderr)
+
+    def test_sites_on_a_comment_line_are_counted(self):
+        rc, out, _ = self.lines('    /* 08804000  nop */ psp_unimplemented(0x08804000u, "x");\n'
+                                '    /* 08804004  nop */ { int _c = (0 /* unhandled branch */);\n')
+        self.assertEqual(rc, 1)
+        self.assertIn("unimplemented 1", out)
+        self.assertIn("  x 1", out)
+        self.assertIn("unhandled branches 1", out)
+
+    def test_empty_file_is_an_error(self):
+        with gen({"main_funcs_000.c": SAMPLE, "main_funcs_001.c": ""}) as d:
+            r = run(d)
+        self.assertEqual(r.returncode, 2, r.stdout)
+        self.assertIn("main_funcs_001.c: no instruction comments (truncated?)", r.stderr)
 
     def test_two_calls_on_one_line_count_twice(self):
         rc, out, _ = self.lines('    psp_unimplemented(0x08804000u, "mtv"); '
