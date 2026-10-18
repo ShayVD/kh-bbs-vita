@@ -52,15 +52,37 @@ static size_t build_elf(uint8_t *b) {
     return 0xA0 + 3 * 0x28;
 }
 
-static void write_file(const char *path, const uint8_t *d, size_t n) {
+static int write_file(const char *path, const uint8_t *d, size_t n) {
     FILE *f = fopen(path, "wb");
-    if (f) { fwrite(d, 1, n, f); fclose(f); }
+    if (!f) return -1;
+    size_t w = fwrite(d, 1, n, f);
+    return (fclose(f) == 0 && w == n) ? 0 : -1;
+}
+
+/* Write a variant ELF and report whether loading it fails. */
+static int load_fails(const uint8_t *elf, size_t n, khbbs_image *img) {
+    if (write_file("t_loader_v.elf", elf, n) != 0) { printf("FAIL write variant\n"); failures++; return 0; }
+    return khbbs_load_elf("t_loader_v.elf", img) != 0;
+}
+
+/* Move the program header table to 0x1A0 and make it hold two PT_LOADs; the
+ * second at vaddr2/memsz2 with 0 filesz. */
+static void two_segments(uint8_t *b, uint32_t vaddr2, uint32_t memsz2) {
+    memcpy(b + 0x1A0, b + 0x34, 0x20);
+    put32(b + 0x1C, 0x1A0);
+    put16(b + 0x2C, 2);
+    uint8_t *ph = b + 0x1A0 + 0x20;
+    put32(ph + 0, 1);
+    put32(ph + 4, 0x60);
+    put32(ph + 8, vaddr2);
+    put32(ph + 16, 0);
+    put32(ph + 20, memsz2);
 }
 
 int main(void) {
-    uint8_t elf[0x200];
+    uint8_t elf[0x200], v[0x200];
     size_t n = build_elf(elf);
-    write_file("t_loader.elf", elf, n);
+    CHECK(write_file("t_loader.elf", elf, n) == 0, "write base");
 
     CHECK(psp_mem_init() == 0, "memory");
     psp_write32(0x08804008u, 0xFFFFFFFFu);   /* must be zeroed as bss */
@@ -77,16 +99,59 @@ int main(void) {
     CHECK(khbbs_load_elf("does-not-exist.elf", &img) != 0, "missing file fails");
 
     uint8_t trunc[16] = "\x7f" "ELF";
-    write_file("t_loader_trunc.elf", trunc, sizeof trunc);
-    CHECK(khbbs_load_elf("t_loader_trunc.elf", &img) != 0, "truncated file fails");
+    CHECK(load_fails(trunc, sizeof trunc, &img), "truncated file fails");
 
-    put16(elf + 0x12, 3);                    /* EM_386 */
-    write_file("t_loader_x86.elf", elf, n);
-    CHECK(khbbs_load_elf("t_loader_x86.elf", &img) != 0, "non-MIPS file fails");
+    memcpy(v, elf, n); put16(v + 0x12, 3);   /* EM_386 */
+    CHECK(load_fails(v, n, &img), "non-MIPS file fails");
+
+    memcpy(v, elf, n); put16(v + 0x10, 0xFFA0); /* PSP PRX type */
+    CHECK(load_fails(v, n, &img), "PRX/non-ET_EXEC fails");
+
+    memcpy(v, elf, n); v[6] = 2;             /* EI_VERSION */
+    CHECK(load_fails(v, n, &img), "bad EI_VERSION fails");
+
+    /* Segments outside main RAM, or wrapping the 32-bit address space. */
+    memcpy(v, elf, n); put32(v + 0x34 + 8, 0x04000000u);
+    CHECK(load_fails(v, n, &img), "VRAM segment fails");
+    memcpy(v, elf, n); put32(v + 0x34 + 8, 0x08000010u); put32(v + 0x34 + 20, 0xFFFFFFF8u);
+    CHECK(load_fails(v, n, &img), "wrapping memsz fails");
+    memcpy(v, elf, n); put32(v + 0x34 + 8, 0x09FFFFF8u); put32(v + 0x34 + 20, 16);
+    CHECK(load_fails(v, n, &img), "segment past RAM end fails");
+
+    memcpy(v, elf, n); put32(v + 0x34 + 16, 32); /* filesz > memsz */
+    CHECK(load_fails(v, n, &img), "filesz > memsz fails");
+
+    memcpy(v, elf, n); put32(v + 0x34 + 0, 4);   /* PT_NOTE only */
+    CHECK(load_fails(v, n, &img), "no PT_LOAD fails");
+
+    /* No .reginfo section: still loads, gp == 0. */
+    memcpy(v, elf, n); put32(v + 0xA0 + 0x28 + 4, 1);
+    CHECK(write_file("t_loader_v.elf", v, n) == 0, "write no-reginfo");
+    CHECK(khbbs_load_elf("t_loader_v.elf", &img) == 0 && img.gp == 0, "no .reginfo gives gp 0");
+
+    /* Two PT_LOADs: lo/hi are min/max; a memsz==0 segment is ignored. */
+    memcpy(v, elf, n); two_segments(v, 0x08900000u, 0x100);
+    CHECK(write_file("t_loader_v.elf", v, n + 0x100) == 0, "write two-seg");
+    CHECK(khbbs_load_elf("t_loader_v.elf", &img) == 0, "two segments load");
+    CHECK(img.lo == 0x08804000u && img.hi == 0x08900100u, "two-segment extent");
+    memcpy(v, elf, n); two_segments(v, 0x04000000u, 0);
+    CHECK(write_file("t_loader_v.elf", v, n + 0x100) == 0, "write empty-seg");
+    CHECK(khbbs_load_elf("t_loader_v.elf", &img) == 0, "memsz==0 segment skipped");
+    CHECK(img.lo == 0x08804000u && img.hi == 0x08804010u, "empty segment ignored in extent");
+
+    /* All-or-nothing: valid first segment, invalid second; nothing is touched. */
+    memcpy(v, elf, n); two_segments(v, 0x04000000u, 0x100);
+    psp_write32(0x08804000u, 0xA5A5A5A5u);
+    khbbs_image keep = { 1, 2, 3, 4 };
+    img = keep;
+    CHECK(write_file("t_loader_v.elf", v, n + 0x100) == 0, "write bad-second");
+    CHECK(khbbs_load_elf("t_loader_v.elf", &img) != 0, "bad second segment fails");
+    CHECK(psp_read32(0x08804000u) == 0xA5A5A5A5u, "failed load leaves memory untouched");
+    CHECK(memcmp(&img, &keep, sizeof img) == 0, "failed load leaves *out untouched");
 
     remove("t_loader.elf");
-    remove("t_loader_trunc.elf");
-    remove("t_loader_x86.elf");
+    remove("t_loader_v.elf");
+    psp_mem_free();
 
     printf("%s\n", failures ? "test_loader: FAILED" : "test_loader: ok");
     return failures ? 1 : 0;
