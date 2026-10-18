@@ -22,16 +22,14 @@ together.
 
 | Directory | Upstream | Commit | Licence | Used for |
 |---|---|---|---|---|
-| `third_party/psprecomp` | github.com/sp00nznet/psprecomp | `caca759` | MIT | recompiler (`allegrexrecomp`) and runtime base |
+| `third_party/psprecomp` | github.com/ShayVD/psprecomp, branch `khbbs` (fork of sp00nznet/psprecomp `caca759`) | `b925bd2` | MIT | recompiler (`allegrexrecomp`) and runtime base |
 | `third_party/pspdecrypt` | github.com/John-K/pspdecrypt | `c156627` | GPL-3.0 | decrypting `EBOOT.BIN`, **as a separate process only**; it is never linked |
 | `third_party/vdpm` | VitaSDK package manager | (as installed) | | installing VitaSDK packages |
 
 pspdecrypt links Homebrew's prebuilt `openssl@3` (already installed); the
 script finds it with `brew --prefix openssl@3`.
 
-When we start changing psprecomp (plan P1), the clone's `origin` moves to our
-fork and the pin follows our fork's commits. It stays a gitignored clone
-either way.
+Our changes to psprecomp live on the fork's `khbbs` branch: commit there, push, then bump the pin here and in the script. The clone's `upstream` remote is sp00nznet/psprecomp.
 
 ## Compilers (`tools/toolchain/`, gitignored)
 

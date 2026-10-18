@@ -65,7 +65,8 @@ clone() {  # url dir commit
 clones() {
   mkdir -p "$root/third_party"
   # Pinned commits; bump them here and in docs/setup.md together.
-  clone https://github.com/sp00nznet/psprecomp psprecomp caca759
+  # Our fork (branch khbbs) of github.com/sp00nznet/psprecomp, based on caca759.
+  clone https://github.com/ShayVD/psprecomp psprecomp b925bd2
   clone https://github.com/John-K/pspdecrypt pspdecrypt c156627
   cmake -S "$root/third_party/psprecomp" -B "$root/third_party/psprecomp/build" >/dev/null
   cmake --build "$root/third_party/psprecomp/build" >/dev/null
