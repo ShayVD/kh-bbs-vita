@@ -1,0 +1,11 @@
+/game/
+*.iso
+*.cso
+*.BIN
+*.PBP
+*.prx
+keys/
+build/
+out/
+/third_party/vdpm/
+/third_party/psprecomp/
