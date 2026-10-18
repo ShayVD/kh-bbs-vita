@@ -17,7 +17,8 @@ run without one.
 Only the first miss of each run ("order": 0 in the log) is fully trustworthy:
 after a stepped-over miss the run carries on with made-up results. Later
 misses are listed as skipped, to be confirmed by another run; --all merges
-them anyway.
+them anyway. A log line without an "order" field is from the old format: it is
+treated as trusted, with one warning on stderr.
 
 Only the lines between the markers are ever rewritten; every other byte of
 bbs.toml is kept as it is. Every way the inputs can be wrong (no markers, a
@@ -45,6 +46,7 @@ def read_log(path):
     """{target: (ra text, trusted)}. ra is from the target's first order-0 line,
     else its first line; trusted means some run missed it as its first miss."""
     first = {}
+    old_format = False
     try:
         text = pathlib.Path(path).read_text(encoding="utf-8")
     except UnicodeDecodeError as ex:
@@ -67,6 +69,7 @@ def read_log(path):
             ra = "unknown"
         elif not isinstance(ra, str) or not HEX32.fullmatch(ra):
             raise MergeError(f"{where}: 'ra' must be a hex string, got {ra!r}")
+        old_format = old_format or "order" not in m
         order = m.get("order", 0)
         if type(order) is not int or order < 0:
             raise MergeError(f"{where}: 'order' must be a non-negative integer, got {order!r}")
@@ -75,7 +78,7 @@ def read_log(path):
         t = int(t, 16)
         if t not in first or (order == 0 and not first[t][1]):
             first[t] = (ra, order == 0)
-    return first
+    return first, old_format
 
 
 def find_block(lines, toml_path):
@@ -94,7 +97,7 @@ def find_block(lines, toml_path):
 
 
 def merge(toml_path, log_path, elf_path, merge_all=False):
-    """Returns (new bbs.toml text or None if unchanged, report lines)."""
+    """Returns (new bbs.toml text or None if unchanged, report lines, warning lines)."""
     raw = pathlib.Path(toml_path).read_bytes()
     try:
         text = raw.decode("utf-8")
@@ -113,7 +116,7 @@ def merge(toml_path, log_path, elf_path, merge_all=False):
         code = exec_ranges(sections(pathlib.Path(elf_path).read_bytes()))
     except ElfError as ex:
         raise MergeError(f"{elf_path}: {ex}") from None
-    misses = read_log(log_path)
+    misses, old_format = read_log(log_path)
 
     lines = text.split("\n")            # not splitlines(): that also splits on \f, \v, U+2028
     b, e = find_block(lines, toml_path)
@@ -153,7 +156,8 @@ def merge(toml_path, log_path, elf_path, merge_all=False):
     if not set(block) <= set(got):
         raise MergeError(f"{toml_path}: the merge_misses markers are not inside discovery.entries")
     report.append(f"added {added}, {len(block)} merged entries in total")
-    return (new if new != text else None), report
+    warnings = ["old-format miss log: treating every line as trusted"] if old_format else []
+    return (new if new != text else None), report, warnings
 
 
 def write_atomic(path, text):
@@ -188,7 +192,7 @@ def main(argv=None):
         elf = a.elf or str(DEFAULT_ELF)
         if not a.elf and not DEFAULT_ELF.is_file():
             raise MergeError(f"no --elf given and {DEFAULT_ELF} does not exist")
-        new, report = merge(a.toml, a.log, elf, a.all)
+        new, report, warnings = merge(a.toml, a.log, elf, a.all)
         if new is not None:
             write_atomic(a.toml, new)
     except MergeError as ex:
@@ -197,6 +201,8 @@ def main(argv=None):
     except OSError as ex:
         print(f"merge_misses: {ex}", file=sys.stderr)
         return 1
+    for w in warnings:
+        print(f"merge_misses: {w}", file=sys.stderr)
     print("\n".join(report))
     return 0
 

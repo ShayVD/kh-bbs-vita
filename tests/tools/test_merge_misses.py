@@ -168,6 +168,17 @@ class MergeMisses(MergeBase):
         self.assertIn("already listed but still missed: 0x08804080 (stale build?)", r.stdout)
         self.assertEqual(after, self.raw)
 
+    def test_old_format_log_warns_once(self):
+        old = '{"seq":0,"target":"0x08804060","ra":"0x08804010","sp":"0x0","last":null}'
+        r, after = self.run_tool([old, old.replace("60", "A0")])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stderr.strip().splitlines(),
+                         ["merge_misses: old-format miss log: treating every line as trusted"])
+        self.assertIn(b"0x08804060", after)
+        self.assertIn(b"0x088040A0", after)
+        r, _ = self.run_tool([miss(0x08804060)])
+        self.assertEqual(r.stderr, "")
+
     def test_real_log_line_with_a_last_function(self):
         line = ('{"seq":3,"order":0,"stepped":false,"target":"0x08804060","ra":"0x08A8BE28",'
                 '"sp":"0x083FFFC0","last":"0x08A8BD58"}')
@@ -301,7 +312,9 @@ class MergeRefusals(MergeBase):
         self.assertEqual(len(r.stderr.strip().splitlines()), 1, r.stderr)
         self.assertNotIn("Traceback", r.stderr)
         (self.dir / "m.jsonl").unlink()
-        r = subprocess.run([sys.executable, str(TOOL), str(self.dir / "m.jsonl"), "--toml", str(self.dir / "bbs.toml")],
+        (self.dir / "e.elf").write_bytes(ELF)
+        r = subprocess.run([sys.executable, str(TOOL), str(self.dir / "m.jsonl"), "--toml", str(self.dir / "bbs.toml"),
+                            "--elf", str(self.dir / "e.elf")],
                            capture_output=True, text=True)
         self.assertEqual(r.returncode, 1)
         self.assertEqual(len(r.stderr.strip().splitlines()), 1, r.stderr)

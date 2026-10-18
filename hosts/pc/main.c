@@ -20,9 +20,10 @@ void psp_recomp_register(void);  /* generated */
 static int usage(void) {
     fprintf(stderr, "usage: khbbs --elf <EBOOT.dec.ELF> [--trace <file.jsonl>] [--budget N]\n"
             "               [--miss-log <file.jsonl>] [--keep-going N]\n"
-            "exit status: 0 the entry point returned; 3 the run stopped (dispatch miss,\n"
-            "budget); 4 it returned or stopped after --keep-going stepped over misses,\n"
-            "so its result is not trustworthy; 2 bad usage; 1 other failure\n");
+            "exit status: 0 the entry point returned; 3 the run stopped at its first\n"
+            "dispatch miss or on budget; 4 it carried on past a miss (--keep-going) and then\n"
+            "returned, ran out of budget or stopped at a later miss, so only its first\n"
+            "miss is trustworthy; 2 bad usage; 1 other failure\n");
     return 2;
 }
 
@@ -68,6 +69,6 @@ int main(int argc, char **argv) {
     if (trace && khbbs_trace_close() != 0) fprintf(stderr, "khbbs: trace write failed\n");
     if (misslog && khbbs_misslog_close() != 0) fprintf(stderr, "khbbs: miss log write failed\n");
     /* A run that carried on past a miss ran on made-up results (boot.h). */
-    if (r.misses && r.why != KHBBS_DISPATCH_MISS) return 4;
+    if (r.misses > (r.why == KHBBS_DISPATCH_MISS ? 1u : 0u)) return 4;
     return r.why == KHBBS_RETURNED ? 0 : 3;
 }
