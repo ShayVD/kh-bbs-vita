@@ -28,3 +28,8 @@ traces stay in build/ and are never committed.
   vtables) needs extra entry-point seeds or pointer-pair discovery before we
   see the game's own code run. `0x35669D4C` should get a trivial
   implementation alongside.
+- Found on the way, for P4: psprecomp's sysmem heap starts at `0x08C00000`,
+  inside the game image `[0x08804018, 0x09F3D7D0)` (the first
+  `sceKernelAllocPartitionMemory` here landed at `0x09FC9000`, outside it, by
+  luck of placement). The fork needs an API to place the user partition
+  around the loaded image before allocations grow.

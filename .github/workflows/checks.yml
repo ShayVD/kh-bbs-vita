@@ -20,3 +20,19 @@ jobs:
         run: |
           python3 -m py_compile tools/import_report.py
           bash -n tools/extract_game.sh tools/check_no_assets.sh
+
+  runtime:
+    # Runtime unit tests on synthetic data; no game files exist in CI.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ninja
+        run: command -v ninja || brew install ninja
+      - name: Fetch pinned psprecomp fork
+        run: tools/setup_toolchain.sh clones
+      - name: Build runtime and tests
+        run: |
+          cmake -S . -B build/ci -G Ninja -DKHBBS_WITH_GAME=OFF
+          cmake --build build/ci
+      - name: Test
+        run: ctest --test-dir build/ci --output-on-failure
