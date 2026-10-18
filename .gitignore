@@ -1,12 +1,37 @@
+# ---- Game data and keys: NEVER commit any of this. ----
+# Everything extracted from the disc lives in ./game/ (see docs/target.md).
 /game/
 *.iso
+*.ISO
 *.cso
+*.CSO
 *.BIN
+*.bin
 *.PBP
 *.prx
+*.PRX
+*.ELF
+*.elf
+*.DAT
+*.dat
+*.SFO
+*.pmf
+*.PMF
+*.at3
+*.AT3
+*.dec
 keys/
+*_keys.txt
+
+# ---- Build outputs ----
 build/
 out/
+
+# ---- Third-party clones (not vendored) ----
 /third_party/vdpm/
 /third_party/psprecomp/
+/third_party/pspdecrypt/
+
 .DS_Store
+__pycache__/
+*.pyc
