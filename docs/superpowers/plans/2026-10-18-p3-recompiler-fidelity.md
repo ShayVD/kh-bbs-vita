@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Every instruction in the main module's `.text` that discovery reaches is translated, and every piece of code the boot path jumps to was discovered. Concretely: zero `psp_unimplemented` sites and zero unhandled branches in the generated C, zero VFPU prefix traps at run time, and zero dispatch misses on the boot path.
+**Goal:** Every instruction in the main module's `.text` that discovery reaches is translated, and every piece of code the boot path jumps to was discovered. Concretely: zero `psp_unimplemented` sites and zero unhandled branches in the generated C, zero VFPU prefix traps at run time, and zero dispatch misses on the boot path. The census only sees code discovery reached, so every result is reported together with discovery's coverage of `.text` (`allegrexrecomp funcs`'s `reached:` line).
 
 **Architecture:** Most of the work is in our psprecomp fork (`third_party/psprecomp`, branch `khbbs`). Discovery gets two new seed sources: `lui`/`addiu` (and `lui`/`ori`) address pairs in code, and a `--seeds FILE` list generated from a new `bbs.toml`. It also learns SNC's `$at` switch idiom. The emitter turns recovered switches into C `switch` statements and handles the VFPU branches. The decoder names every VFPU encoding the game uses, and the VFPU runtime gains operand prefixes plus the missing ops. This repo adds `bbs.toml`, `tools/bbs_seeds.py`, `tools/unimpl_census.py`, `tools/merge_misses.py`, a dispatch-miss log in `runtime/` and a guest-`break` stop.
 
@@ -223,7 +223,7 @@ Expected: `OK` (4 tests).
 - [ ] **Step 5: Record the baseline on the real build**
 
 Run: `python3 tools/unimpl_census.py build/pc/gen`
-Expected: `unimplemented 735`, then `mtv 217` … `ceil.w.s 1` as in **Baseline** above, `unhandled branches 47`, exit status 1.
+Expected: `unimplemented 725`, then `mtv 217` … `ceil.w.s 1` as in **Baseline** above, `unhandled branches 47`, exit status 1.
 
 - [ ] **Step 6: Run the tests in CI**
 
