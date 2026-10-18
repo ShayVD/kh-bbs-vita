@@ -9,3 +9,4 @@ build/
 out/
 /third_party/vdpm/
 /third_party/psprecomp/
+.DS_Store
