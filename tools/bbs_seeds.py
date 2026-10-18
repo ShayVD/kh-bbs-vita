@@ -11,7 +11,8 @@ range (`addr` + `count`), read every `stride` bytes (default 4).
 Every address must lie in an executable section. bbs.toml is maintained by
 hand and by tools/merge_misses.py, and a typo there must fail the build
 rather than seed data as code. Every way the inputs can be wrong ends in one
-line on stderr and exit status 1; no output file is left behind.
+line on stderr and exit status 1. A failed run also deletes the output file,
+so a stale seeds file from an earlier run is never mistaken for a good one.
 """
 import argparse, hashlib, os, pathlib, struct, sys, tomllib
 
@@ -21,30 +22,34 @@ SHDR_SIZE = 40
 TABLE_KEYS = {"section", "addr", "count", "stride"}
 
 
+class ElfError(ValueError):
+    """The ELF file is malformed or is not the pinned one (reported with its path)."""
+
+
 def sections(elf):
     """The ELF's section headers as dicts: name, type, flags, addr, offset, size.
     Raises ValueError when the header or section table does not fit the file."""
     if len(elf) < 0x34 or elf[:4] != b"\x7fELF" or elf[4] != 1 or elf[5] != 1:
-        raise ValueError("not a little-endian ELF32 file")
+        raise ElfError("not a little-endian ELF32 file")
     shoff, = struct.unpack_from("<I", elf, 0x20)
     shentsize, shnum, shstrndx = struct.unpack_from("<HHH", elf, 0x2E)
     if shentsize != SHDR_SIZE:
-        raise ValueError(f"ELF section header size is {shentsize}, expected {SHDR_SIZE}")
+        raise ElfError(f"ELF section header size is {shentsize}, expected {SHDR_SIZE}")
     if not 0 < shstrndx < shnum:
-        raise ValueError(f"ELF shstrndx {shstrndx} is not a section (shnum {shnum})")
+        raise ElfError(f"ELF shstrndx {shstrndx} is not a section (shnum {shnum})")
     if shoff + shnum * SHDR_SIZE > len(elf):
-        raise ValueError("ELF section header table runs past the end of the file")
+        raise ElfError("ELF section header table runs past the end of the file")
     raw = [struct.unpack_from("<10I", elf, shoff + i * SHDR_SIZE) for i in range(shnum)]
     for i, (_, typ, _, _, off, size, *_) in enumerate(raw):
         if typ not in (SHT_NULL, SHT_NOBITS) and off + size > len(elf):
-            raise ValueError(f"ELF section {i} runs past the end of the file")
+            raise ElfError(f"ELF section {i} runs past the end of the file")
     stroff, strsize = raw[shstrndx][4], raw[shstrndx][5]
     strtab = elf[stroff:stroff + strsize]
     out = []
     for i, (name, typ, flags, addr, off, size, *_) in enumerate(raw):
         end = strtab.find(b"\0", name)
         if end < 0:
-            raise ValueError(f"ELF section {i} has a bad name offset")
+            raise ElfError(f"ELF section {i} has a bad name offset")
         out.append({"name": strtab[name:end].decode("utf-8", "replace"), "type": typ,
                     "flags": flags, "addr": addr, "offset": off, "size": size})
     return out
@@ -116,7 +121,7 @@ def table_words(elf, secs, t, where):
         raise ValueError(f"{where}: {ex}") from None
 
 
-def resolve(cfg, elf, path):
+def resolve(cfg, elf):
     """The seed addresses for `cfg` (parsed bbs.toml) against `elf`."""
     target = cfg.get("target")
     if not isinstance(target, dict):
@@ -128,7 +133,7 @@ def resolve(cfg, elf, path):
         raise ValueError(f"[target].eboot_sha1: expected a string, got {want!r}")
     got = hashlib.sha1(elf).hexdigest()
     if got != want.lower():
-        raise ValueError(f"{path}: SHA-1 {got} does not match bbs.toml's {want.lower()}")
+        raise ElfError(f"SHA-1 {got} does not match bbs.toml's {want.lower()}")
 
     secs = sections(elf)
     code = exec_ranges(secs)
@@ -163,35 +168,48 @@ def resolve(cfg, elf, path):
     return out
 
 
+def remove(path):
+    """Delete a file if it is there; a directory or a permission error is left alone."""
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("toml")
     ap.add_argument("elf")
     ap.add_argument("-o", "--output", required=True)
     a = ap.parse_args(argv)
+    tmp = a.output + ".tmp"
+    remove(a.output)
+    remove(tmp)
 
     try:
         cfg = tomllib.loads(pathlib.Path(a.toml).read_text(encoding="utf-8"))
         elf = pathlib.Path(a.elf).read_bytes()
-        out = resolve(cfg, elf, a.elf)
-        tmp = a.output + ".tmp"
+        out = resolve(cfg, elf)
         with open(tmp, "w") as f:
             f.write("# generated from bbs.toml by tools/bbs_seeds.py; do not edit\n")
             f.writelines(f"0x{x:08X}\n" for x in out)
         os.replace(tmp, a.output)
     except tomllib.TOMLDecodeError as ex:
-        print(f"{a.toml}: {ex}", file=sys.stderr)
-        return 1
+        msg = f"{a.toml}: {ex}"
     except KeyError as ex:
-        print(f"{a.toml}: missing key {ex} in bbs.toml", file=sys.stderr)
-        return 1
+        msg = f"{a.toml}: missing key {ex} in bbs.toml"
     except OSError as ex:
-        print(f"bbs_seeds: {ex}", file=sys.stderr)
-        return 1
+        msg = f"bbs_seeds: {ex}"
+    except ElfError as ex:
+        msg = f"{a.elf}: {ex}"
     except (ValueError, TypeError, AttributeError, IndexError, struct.error) as ex:
-        print(f"{a.toml}: {ex}", file=sys.stderr)
-        return 1
-    return 0
+        msg = f"{a.toml}: {ex}"
+    else:
+        return 0
+    remove(tmp)
+    remove(a.output)
+    print(msg, file=sys.stderr)
+    return 1
 
 
 if __name__ == "__main__":

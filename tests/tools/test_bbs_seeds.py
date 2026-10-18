@@ -55,17 +55,21 @@ def patched(elf, off, fmt, *vals):
 
 
 class BbsSeeds(unittest.TestCase):
-    def run_tool(self, toml_text, elf=ELF):
+    def run_tool(self, toml_text, elf=ELF, stale=False, out_is_dir=False):
         d = tempfile.TemporaryDirectory()
         self.addCleanup(d.cleanup)
         p = pathlib.Path(d.name)
         (p / "bbs.toml").write_text(toml_text)
         (p / "e.elf").write_bytes(elf)
+        if stale:
+            (p / "seeds.txt").write_text("0xDEADBEEF\n")
+        if out_is_dir:
+            (p / "seeds.txt").mkdir()
         r = subprocess.run([sys.executable, str(TOOL), str(p / "bbs.toml"), str(p / "e.elf"),
                             "-o", str(p / "seeds.txt")], capture_output=True, text=True)
         self.assertFalse((p / "seeds.txt.tmp").exists())
         self.out = p / "seeds.txt"
-        out = self.out.read_text() if self.out.exists() else None
+        out = self.out.read_text() if self.out.is_file() else None
         return r, out
 
     def ok(self, toml_text, elf=ELF):
@@ -74,8 +78,9 @@ class BbsSeeds(unittest.TestCase):
         return [int(l, 16) for l in out.splitlines() if l and not l.startswith("#")]
 
     def refuse(self, toml_text, *needles, elf=ELF):
-        """Exit 1, one-line message naming every needle, no traceback, no output file."""
-        r, out = self.run_tool(toml_text, elf)
+        """Exit 1, one-line message naming every needle, no traceback, and no
+        output file, even when a stale one from an earlier run was there."""
+        r, out = self.run_tool(toml_text, elf, stale=True)
         self.assertEqual(r.returncode, 1, r.stderr)
         self.assertNotIn("Traceback", r.stderr)
         self.assertEqual(len(r.stderr.strip().splitlines()), 1, r.stderr)
@@ -100,7 +105,19 @@ class BbsSeeds(unittest.TestCase):
     # ---- target and addresses
 
     def test_sha_mismatch_refused(self):
-        self.refuse(toml("0" * 40), "SHA-1")
+        self.refuse(toml("0" * 40), "e.elf: SHA-1")
+
+    def test_failure_deletes_stale_output(self):
+        r, out = self.run_tool(toml("0" * 40), stale=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertFalse(self.out.exists())
+
+    def test_failed_write_leaves_no_tmp(self):
+        # os.replace onto a directory fails after the tmp file was written
+        r, _ = self.run_tool(toml(sha()), out_is_dir=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertEqual(len(r.stderr.strip().splitlines()), 1, r.stderr)
 
     def test_entry_outside_code_refused(self):
         self.refuse(toml(sha(), entries="    0x08B31348,\n"), "0x08B31348", "entries[1]")
@@ -206,7 +223,10 @@ class BbsSeeds(unittest.TestCase):
     # ---- malformed ELF (the SHA-1 of the damaged file is what bbs.toml pins)
 
     def damaged(self, elf, *needles):
-        self.refuse(toml(sha(elf)), *needles, elf=elf)
+        """ELF errors are prefixed with the ELF's path, not bbs.toml's."""
+        self.refuse(toml(sha(elf)), "e.elf: ", *needles, elf=elf)
+        r, _ = self.run_tool(toml(sha(elf)), elf)
+        self.assertNotIn("bbs.toml:", r.stderr)
 
     def test_not_an_elf_refused(self):
         self.damaged(b"hello" * 20, "ELF")
