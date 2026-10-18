@@ -2,6 +2,7 @@
 add_library(khbbs_runtime STATIC
     loader.c
     trace.c
+    misslog.c
     boot.c
     unimplemented.c
 )

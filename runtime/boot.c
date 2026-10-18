@@ -1,4 +1,5 @@
 #include "khbbs/boot.h"
+#include "khbbs/misslog.h"
 #include "khbbs/trace.h"
 #include "psprecomp/cpu.h"
 #include "psprecomp/dispatch.h"
@@ -17,8 +18,16 @@
 
 static jmp_buf g_stop;
 static khbbs_result g_res;
+static uint32_t g_keep_going;
 
 static void on_miss(uint32_t addr) {
+    khbbs_misslog_record(addr);
+    g_res.misses++;
+    if (g_res.misses <= g_keep_going) {
+        psp_cpu.r[PSP_REG_V0] = 0;
+        psp_cpu.r[PSP_REG_V1] = 0;
+        return;                          /* psp_dispatch returns to its caller */
+    }
     g_res.why = KHBBS_DISPATCH_MISS;
     g_res.addr = addr;
     longjmp(g_stop, 1);
@@ -29,7 +38,8 @@ static void on_budget(void) {
     longjmp(g_stop, 1);
 }
 
-khbbs_result khbbs_boot(const khbbs_image *img, const char *path, uint64_t budget) {
+khbbs_result khbbs_boot(const khbbs_image *img, const char *path, const khbbs_boot_opts *opts) {
+    const uint64_t budget = opts ? opts->budget : 0;
     memset(&g_res, 0, sizeof g_res);
     if (!img || !path) {
         fprintf(stderr, "khbbs: boot called with NULL image or path\n");
@@ -52,6 +62,7 @@ khbbs_result khbbs_boot(const khbbs_image *img, const char *path, uint64_t budge
     psp_cpu.r[PSP_REG_SP] = BOOT_STACK_TOP - 0x40;
     psp_cpu.r[PSP_REG_GP] = img->gp;
     psp_cpu.r[PSP_REG_RA] = 0;
+    g_keep_going = opts ? opts->keep_going : 0;
     psp_set_miss_handler(on_miss);
     /* psp_dispatch only counts while a budget is armed, so "unlimited" arms
      * UINT64_MAX (never reached) to keep result.calls meaningful. Always set:
@@ -67,6 +78,7 @@ khbbs_result khbbs_boot(const khbbs_image *img, const char *path, uint64_t budge
      * psprecomp has no getter, so the previous miss handler cannot be
      * restored; NULL restores its default (report and abort). */
     psp_set_miss_handler(NULL);
+    g_keep_going = 0;
     psp_dispatch_set_budget(0, NULL);
     khbbs_trace_flush();
     return g_res;
