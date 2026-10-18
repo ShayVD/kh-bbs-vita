@@ -432,23 +432,15 @@ build/                   (gitignored) gen/*.c, objects, binaries, traces
   for hot functions (memcpy/memset-like loops, matrix code) before the decomp
   reaches them.
 
-## Open questions for you
+## Decisions (review of PR #1)
 
-1. **psprecomp fork**: a GitHub fork plus a git submodule (a pointer commit,
-   not vendored code), or keep a gitignored clone pinned by commit in
-   `bbs.toml`? The ground rules say not to commit `third_party` clones, so a
-   submodule needs your OK.
-2. **ATRAC3+ (and H.264 on PC if not VideoToolbox)**: is an LGPL FFmpeg
-   decoder subset, built from source, acceptable for the project's licence?
-   The alternatives are writing our own ATRAC3+ decoder (large) or shipping
-   without music and voice for M1/M2.
-3. **PGD**: offline decryption into `./game/` (proposed) or on-the-fly
-   decryption in the runtime? Either way the PGD keys live in the gitignored
-   `keys/` file.
-4. **Compiler identification** for the decomp needs candidate PSP compilers
-   (SN ProDG / psp-gcc 3.3.x, SNC). Do you have access to any of them? What
-   kh1-decomp did with ee-gcc (fetching from decomp.me's compiler set) may
-   work here too.
-5. **Tools to install for Phase 1**: PPSSPP (oracle, needed before M1), and
-   later Java + Ghidra + ghidra-allegrex (naming, structs). OK to install
-   PPSSPP's official macOS build now?
+1. **psprecomp stays a gitignored clone**, pinned by commit in
+   `tools/setup_toolchain.sh` and documented in [setup.md](setup.md). Our
+   changes go to a fork that the clone tracks.
+2. **ATRAC3+ and H.264**: an LGPL FFmpeg decoder subset, built from source, is
+   accepted.
+3. **PGD**: decrypt `BBS1`–`3.DAT` **once, offline**, into `./game/`.
+4. **Compilers**: fetched from decomp.me's archive. The game is SNC
+   ([toolchain.md](toolchain.md)).
+5. **Tools**: PPSSPP 1.20.4, JDK 21, Ghidra 12.1.3 and ghidra-allegrex are
+   installed ([setup.md](setup.md)).
