@@ -94,7 +94,7 @@ psprecomp() {
   # Our fork (branch khbbs) of github.com/sp00nznet/psprecomp, based on caca759.
   # Built as the top-level project, so its own tests are built too: CI runs
   # them with ctest --test-dir third_party/psprecomp/build.
-  clone https://github.com/ShayVD/psprecomp psprecomp e75f505 khbbs https://github.com/sp00nznet/psprecomp
+  clone https://github.com/ShayVD/psprecomp psprecomp 0a1a2ec khbbs https://github.com/sp00nznet/psprecomp
   cmake -S "$root/third_party/psprecomp" -B "$root/third_party/psprecomp/build" >/dev/null
   cmake --build "$root/third_party/psprecomp/build" >/dev/null
   echo "ok: psprecomp built (with its tests)"

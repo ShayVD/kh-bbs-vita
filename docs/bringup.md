@@ -39,7 +39,7 @@ traces stay in build/ and are never committed.
 
 ## P3, recompiler fidelity (2026-10-19)
 
-- Build: psprecomp `e75f505` (35 commits on `b925bd2`), `--split 64`,
+- Build: psprecomp `0a1a2ec` (41 commits on `b925bd2`), `--split 64`,
   `-O1`, `--seeds build/pc/gen/seeds.txt` from `bbs.toml`: 12.8 s wall for
   a clean `cmake --build build/pc` (117 steps, 69 s user).
 - Command: `perl -e 'alarm shift; exec @ARGV' 280 build/pc/hosts/pc/khbbs --elf game/EBOOT.dec.ELF --budget 50000000 --miss-log build/misses.jsonl --keep-going 1000`
@@ -47,7 +47,7 @@ traces stay in build/ and are never committed.
   per dispatch, 17.5 GB for 50M dispatches).
 - Discovery, P1 → P3 (`allegrexrecomp funcs`):
 
-  | | P1 (`b925bd2`) | P3 (`e75f505`) |
+  | | P1 (`b925bd2`) | P3 (`0a1a2ec`) |
   |---|---|---|
   | seeds | 23,056 | 12,645 used: entry, 2 exports, 12,128 of 23,053 data pointers, 415 address pairs, 99 from `bbs.toml` |
   | functions | 24,853 | 12,905 |
@@ -102,6 +102,8 @@ traces stay in build/ and are never committed.
     out-of-range values;
   - `vf2iz`/`vi2f` dropped their scale exponent;
   - the runtime library was built with fused multiply-add.
+  - the homogeneous transform `vhtfm` (4 sites, 0x08827738..40 and 0x08AF986C)
+    was computed as a plain `vtfm`, dropping the translation column.
 - What this means for P2, P4, P5:
   - P4 next: a real scheduler (the `DiscInfoBind` loop must yield to
     `user_main`), sysmem placement outside the image, the NULL write in
@@ -113,6 +115,18 @@ traces stay in build/ and are never committed.
     saturation and denormals, vsrt/vsgn NaN and ±0) are the first oracle
     checks. None of this code runs on the boot path yet, so unit tests are
     its only verification so far.
+- Risks the final review flagged for later phases:
+  - every stop path (`on_miss`, `on_budget`, `psp_break`) `longjmp`s into the
+    boot thread's `g_stop`; with P4's host thread per guest thread a stop on
+    another host thread cannot unwind that way, so stops need redesigning;
+  - VFPU state (registers, `vfpu_cc`, pending prefixes, the `vrnd` state) is
+    global and must be saved and restored per thread by P4's scheduler;
+  - the Vita host must call `khbbs_install_traps()`, keep `-ffp-contract=off`
+    (GCC contracts by default) and must not set FPSCR.FZ (denormals);
+  - integer bit patterns live in `float v[]` lanes (vi2f, vpack, mtv, vrndi):
+    safe only while they are copied, never computed with, so no fast-math;
+  - the census sees loud gaps only; silent mis-decodes like the old `vhtfm`
+    need their own checks, which P2's oracle provides.
 - Tooling notes: SNC's `pspas.exe` under `wibo-macos` started hanging in
   uninterruptible (`U`) state partway through the session (after lldb
   attempts); the stuck processes survive `kill -9`. It probably needs a
