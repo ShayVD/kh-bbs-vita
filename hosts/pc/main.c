@@ -56,7 +56,9 @@ static int stat_parent(const char *path, struct stat *st, const char **base) {
 }
 
 /* Same path, or both exist and are the same file, or neither exists and both
- * name the same entry of the same directory (./t and t). */
+ * name the same entry of the same directory (./t and t). Missed: non-existent
+ * names that differ only in case on a case-insensitive file system (APFS),
+ * and a dangling symlink against the path it points to. */
 static int same_file(const char *a, const char *b) {
     struct stat sa, sb;
     const char *ba, *bb;

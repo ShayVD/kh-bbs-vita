@@ -1,7 +1,7 @@
 # khbbs: Kingdom Hearts Birth by Sleep (ULUS10505 v1.00) static recompilation.
 # See docs/architecture.md. Game files come from KHBBS_GAME_DIR (default ./game)
 # and generated code goes to the build tree; neither is ever committed.
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.20)  # ctest fixtures: cmake -E rm, create_hardlink
 project(khbbs C)
 
 set(CMAKE_C_STANDARD 11)

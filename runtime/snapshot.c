@@ -15,7 +15,9 @@ static char     g_path[1024];
 static int      g_fired;
 
 /* remove() path only if it is a file we can read: remove() also deletes an
- * empty directory on POSIX, where fopen() opens one but reading it fails. */
+ * empty directory on POSIX, where fopen() opens one but reading it fails.
+ * Within C11 stdio this has two accepted gaps: the getc() blocks on a FIFO or
+ * tty, and a write-only file is not removed. */
 static void remove_file(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return;

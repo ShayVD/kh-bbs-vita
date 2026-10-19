@@ -116,6 +116,13 @@ class Frame(unittest.TestCase):
                     frame.grab(p, {STUB: frame.NID}, 1)
                 if "args" in kw:
                     self.assertNotIn("read", [c[0] for c in p.calls if isinstance(c, tuple)])
+        # The uncached mirror is read at the plain address.
+        p = FakeSession([STUB], args=(0x44044000, 512, 1))
+        self.assertEqual(frame.grab(p, {STUB: frame.NID}, 1)[0], 0x44044000)
+        self.assertEqual(p.calls[-1], ("read", TOP, 512 * 272 * 2))
+        p = FakeSession([STUB], args=(0x441F0000, 512, 1))
+        with self.assertRaisesRegex(frame.FrameError, "0x041F0000..0x04234000 is not inside VRAM"):
+            frame.grab(p, {STUB: frame.NID}, 1)
         # The last byte of VRAM is fine.
         p = FakeSession([STUB], args=(0x04200000 - 512 * 272 * 2, 512, 1))
         self.assertEqual(frame.grab(p, {STUB: frame.NID}, 1)[0], 0x04200000 - 512 * 272 * 2)

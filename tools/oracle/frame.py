@@ -52,10 +52,11 @@ def grab(p, targets, n, timeout=120.0):
     if not WIDTH <= stride <= MAX_STRIDE:
         raise FrameError(f"{where}: stride outside {WIDTH}..{MAX_STRIDE}")
     want = vram.size(stride, HEIGHT, fmt)
-    if not VRAM[0] <= topaddr <= VRAM[1] - want:
-        raise FrameError(f"{where}: 0x{topaddr:08X}..0x{topaddr + want:08X} is not inside VRAM "
+    addr = topaddr & 0x3FFFFFFF                  # 0x44000000 is the uncached mirror of VRAM
+    if not VRAM[0] <= addr <= VRAM[1] - want:
+        raise FrameError(f"{where}: 0x{addr:08X}..0x{addr + want:08X} is not inside VRAM "
                          f"0x{VRAM[0]:08X}..0x{VRAM[1]:08X}")
-    data = p.read_memory(topaddr, want)
+    data = p.read_memory(addr, want)
     if len(data) != want:
         raise FrameError(f"{where}: read {len(data)} bytes of VRAM, expected {want}")
     return topaddr, stride, fmt, data, other
