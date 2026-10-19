@@ -1,6 +1,6 @@
 """frame.py's frame counting, checks and outputs, with a fake PPSSPP session
 and a synthetic ELF. Every value is made up."""
-import contextlib, io, json, pathlib, struct, sys, tempfile, unittest
+import contextlib, io, json, pathlib, re, struct, sys, tempfile, unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
@@ -19,8 +19,9 @@ class FakeSession:
     stop in `stops` (a pc, or an exception to raise). At a stop, a0..a2 are
     `args`; VRAM holds format-1 pixels whose red is the column (mod 32) and
     blue the line (mod 32)."""
-    def __init__(self, stops, args=(TOP, 512, 1)):
+    def __init__(self, stops, args=(TOP, 512, 1), short=0, drop=None):
         self.stops, self.args, self.calls = list(stops), args, []
+        self.short, self.drop = short, drop          # bytes missing from a read; a register left out
         self.breakpoints = {}
         self.close = mock.Mock()
 
@@ -38,13 +39,16 @@ class FakeSession:
 
     def regs(self):
         a0, a1, a2 = self.args
-        return {"a0": a0, "a1": a1, "a2": a2, "ra": 0x08A8BE30}
+        regs = {"a0": a0, "a1": a1, "a2": a2, "ra": 0x08A8BE30}
+        regs.pop(self.drop, None)
+        return regs
 
     def read_memory(self, addr, size):
         self.calls.append(("read", addr, size))
         stride = self.args[1]
-        return b"".join(struct.pack("<H", (x & 31) | (y & 31) << 10)
+        data = b"".join(struct.pack("<H", (x & 31) | (y & 31) << 10)
                         for y in range(size // 2 // stride) for x in range(stride))
+        return data[:len(data) - self.short]
 
 
 class Frame(unittest.TestCase):
@@ -97,6 +101,30 @@ class Frame(unittest.TestCase):
                 p.close.assert_called_once()
                 self.assertFalse(self.out.exists())
 
+    def test_grab_errors(self):
+        cases = [(dict(short=2), "frame 1: topaddr 0x04044000, stride 512, format 1: read 278526 bytes of "
+                                 "VRAM, expected 278528"),
+                 (dict(drop="a2"), "frame 1: PPSSPP gave no a2 register"),
+                 (dict(args=(0x041F0000, 512, 1)), "0x041F0000..0x04234000 is not inside VRAM "
+                                                   "0x04000000..0x04200000"),
+                 (dict(args=(0x08800000, 512, 1)), "is not inside VRAM"),
+                 (dict(args=(0x03FFF000, 512, 1)), "is not inside VRAM")]
+        for kw, msg in cases:
+            with self.subTest(msg):
+                p = FakeSession([STUB], **kw)
+                with self.assertRaisesRegex(frame.FrameError, re.escape(msg)):
+                    frame.grab(p, {STUB: frame.NID}, 1)
+                if "args" in kw:
+                    self.assertNotIn("read", [c[0] for c in p.calls if isinstance(c, tuple)])
+        # The last byte of VRAM is fine.
+        p = FakeSession([STUB], args=(0x04200000 - 512 * 272 * 2, 512, 1))
+        self.assertEqual(frame.grab(p, {STUB: frame.NID}, 1)[0], 0x04200000 - 512 * 272 * 2)
+
+    def test_main_reports_a_missing_register(self):
+        code, _, err, _ = self.run_main(FakeSession([STUB, STUB], drop="a0"))
+        self.assertEqual(code, 1)
+        self.assertIn("frame: frame 2: PPSSPP gave no a0 register", err)
+
     def test_ppsspp_error_closes(self):
         p = FakeSession([PpssppError("PPSSPP exited")])
         code, _, err, _ = self.run_main(p)
@@ -112,7 +140,9 @@ class Frame(unittest.TestCase):
         launch.assert_not_called()
 
     def test_refuses_to_overwrite_inputs(self):
-        for extra in (["-o", str(self.elf)], ["-o", str(self.out), "--raw", str(self.elf)]):
+        for extra in (["-o", str(self.elf)], ["-o", str(self.out), "--raw", str(self.elf)],
+                      ["-o", str(self.raw), "--raw", str(self.raw)],
+                      ["-o", str(self.tmp / "o/x/../frame.bin.json"), "--raw", str(self.raw)]):
             with self.subTest(extra):
                 argv = ["--iso", "game.iso", "--elf", str(self.elf), "--frame", "1", *extra]
                 err = io.StringIO()

@@ -10,8 +10,8 @@ there), converted with vram.py and cropped to 480 pixels wide.
 --raw FILE also writes the VRAM bytes (bufferwidth * 272 pixels) and the
 sidecar FILE.json: {"topaddr":"0x...","stride":512,"format":1,"frame":N}.
 Stops at other addresses are resumed and not counted (snapshot.stop_at).
-The outputs are removed first and on any failure. Exit 0 on success,
-1 on failure, 2 on bad usage.
+The outputs are removed first and on any failure, and may not be an input
+or each other. Exit 0 on success, 1 on failure, 2 on bad usage.
 
 Usage:
   tools/oracle/frame.py --iso ISO --elf game/EBOOT.dec.ELF --frame 300 \\
@@ -27,6 +27,7 @@ from oracle.snapshot import SnapshotError  # noqa: E402
 NID = 0x289D82FE                 # sceDisplaySetFrameBuf
 WIDTH, HEIGHT = 480, 272
 MAX_STRIDE = 1024                # sceDisplaySetFrameBuf rejects wider buffers
+VRAM = (0x04000000, 0x04200000)  # 2 MiB; the buffer must lie inside
 
 
 class FrameError(Exception):
@@ -39,6 +40,9 @@ def grab(p, targets, n, timeout=120.0):
     (topaddr, stride, fmt, data, other stops)."""
     _pc, other = snapshot.stop_at(p, targets, n, timeout)
     regs = p.regs()
+    for r in ("a0", "a1", "a2"):
+        if r not in regs:
+            raise FrameError(f"frame {n}: PPSSPP gave no {r} register")
     topaddr, stride, fmt = regs["a0"], regs["a1"], regs["a2"]
     where = f"frame {n}: topaddr 0x{topaddr:08X}, stride {stride}, format {fmt}"
     if topaddr == 0:
@@ -47,7 +51,13 @@ def grab(p, targets, n, timeout=120.0):
         raise FrameError(f"{where}: unknown pixel format")
     if not WIDTH <= stride <= MAX_STRIDE:
         raise FrameError(f"{where}: stride outside {WIDTH}..{MAX_STRIDE}")
-    data = p.read_memory(topaddr, vram.size(stride, HEIGHT, fmt))
+    want = vram.size(stride, HEIGHT, fmt)
+    if not VRAM[0] <= topaddr <= VRAM[1] - want:
+        raise FrameError(f"{where}: 0x{topaddr:08X}..0x{topaddr + want:08X} is not inside VRAM "
+                         f"0x{VRAM[0]:08X}..0x{VRAM[1]:08X}")
+    data = p.read_memory(topaddr, want)
+    if len(data) != want:
+        raise FrameError(f"{where}: read {len(data)} bytes of VRAM, expected {want}")
     return topaddr, stride, fmt, data, other
 
 
@@ -81,8 +91,8 @@ def main(argv=None):
     ap.add_argument("--timeout", type=float, default=120.0, help="seconds to reach the frame")
     a = ap.parse_args(argv)
     files = outputs(a)
-    for f in files:
-        for x in (a.iso, a.elf):
+    for i, f in enumerate(files):
+        for x in (a.iso, a.elf, *files[:i]):         # an input, or an earlier output
             if snapshot.same_file(f, x):
                 print(f"frame: refusing output {f}: it is also {x}", file=sys.stderr)
                 return 2

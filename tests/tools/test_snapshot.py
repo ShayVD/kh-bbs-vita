@@ -38,7 +38,7 @@ class FakeSession:
 
     def regs(self):
         self.calls.append("regs")
-        return {"pc": self.pc, "ra": 0x08A8BE30}
+        return {"pc": self.pc} if getattr(self, "no_ra", False) else {"pc": self.pc, "ra": 0x08A8BE30}
 
     def read_memory(self, addr, size):
         self.calls.append(("read", addr, size, self.pc))
@@ -122,6 +122,13 @@ class Snapshot(unittest.TestCase):
                 snapshot.take(FakeSession([STUB_CREATE]), targets, 1, "sceKernelCreateThread:1", self.out)
         self.assertFalse(self.out.exists())
         self.assertFalse((self.tmp / "o/mem.bin.json").exists())
+
+    def test_missing_ra(self):
+        p = FakeSession([STUB_CREATE])
+        p.no_ra = True
+        with self.assertRaisesRegex(SnapshotError, "PPSSPP gave no ra register"):
+            snapshot.take(p, {STUB_CREATE: CREATE}, 1, "x:1", self.out)
+        self.assertFalse(self.out.exists())
 
     def test_deadline(self):
         with self.assertRaisesRegex(SnapshotError, r"timed out after 0 s \(0 of 1 calls seen"):

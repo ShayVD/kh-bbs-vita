@@ -108,6 +108,8 @@ def take(p, targets, k, event, out, timeout=120.0):
 def _take(p, targets, k, event, out, side, timeout):
     pc, other = stop_at(p, targets, k, timeout)
     regs = p.regs()
+    if "ra" not in regs:
+        raise SnapshotError("PPSSPP gave no ra register")
     data = p.read_memory(BASE, SIZE)
     if len(data) != SIZE:
         raise SnapshotError(f"read {len(data)} bytes of RAM, expected {SIZE}")

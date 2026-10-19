@@ -1,8 +1,9 @@
 """Read and write PNG files as rows of RGBA8 bytes, standard library only.
 
 Reads 8-bit RGB and RGBA, non-interlaced, with all five filter types; every
-chunk's CRC is checked. Writes RGBA with filter 0. That covers PPSSPP's
-screenshots and what our backends write.
+chunk's CRC is checked, and the first chunk must be the only IHDR. Writes
+RGBA with filter 0. That covers PPSSPP's screenshots and what our backends
+write.
 """
 import pathlib, struct, zlib
 
@@ -27,6 +28,9 @@ def read(path):
         (crc,) = struct.unpack_from(">I", data, pos + 8 + length)
         if zlib.crc32(kind + body) != crc:
             raise ValueError(f"{path}: bad CRC in {kind!r} chunk")
+        if (kind == b"IHDR") != (pos == 8):
+            raise ValueError(f"{path}: second IHDR" if kind == b"IHDR" else
+                             f"{path}: first chunk is {kind!r}, not IHDR")
         pos += 12 + length
         if kind == b"IHDR":
             ihdr = body
@@ -34,8 +38,8 @@ def read(path):
             idat.append(body)
         elif kind == b"IEND":
             break
-    if ihdr is None or len(ihdr) != 13:
-        raise ValueError(f"{path}: no IHDR")
+    if len(ihdr) != 13:
+        raise ValueError(f"{path}: IHDR of {len(ihdr)} bytes, expected 13")
     width, height, depth, ctype, comp, filt, interlace = struct.unpack(">IIBBBBB", ihdr)
     if depth != 8 or ctype not in CHANNELS or comp or filt or interlace:
         raise ValueError(f"{path}: unsupported PNG (depth {depth}, colour type {ctype}, "

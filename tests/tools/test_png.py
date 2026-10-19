@@ -1,5 +1,5 @@
 """png.py on synthetic images built in the test. Every pixel is made up."""
-import pathlib, struct, sys, tempfile, unittest, zlib
+import pathlib, re, struct, sys, tempfile, unittest, zlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "tools"))
 from oracle import png  # noqa: E402
@@ -27,14 +27,51 @@ def filtered(ftype, row, prev, bpp):
     return bytes([ftype]) + bytes(out)
 
 
-def rgb_png(width, rows, filters):
-    """An 8-bit RGB PNG whose row y uses filters[y]."""
-    prev, raw = bytes(width * 3), b""
+def rgb_png(width, rows, filters, bpp=3):
+    """An 8-bit RGB (bpp 3) or RGBA (bpp 4) PNG whose row y uses filters[y]."""
+    prev, raw = bytes(width * bpp), b""
     for row, f in zip(rows, filters):
-        raw += filtered(f, row, prev, 3)
+        raw += filtered(f, row, prev, bpp)
         prev = row
-    ihdr = struct.pack(">IIBBBBB", width, len(rows), 8, 2, 0, 0, 0)
-    return png.SIGNATURE + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+    return png_of(width, len(rows), raw, bpp)
+
+
+def png_of(width, height, raw, bpp=3, idat=None):
+    """A PNG of already filtered `raw` image data; `idat` overrides the
+    compressed bytes, a list splits them into several IDAT chunks."""
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, {3: 2, 4: 6}[bpp], 0, 0, 0)
+    idat = zlib.compress(raw) if idat is None else idat
+    parts = idat if isinstance(idat, list) else [idat]
+    return (png.SIGNATURE + chunk(b"IHDR", ihdr) + b"".join(chunk(b"IDAT", d) for d in parts) +
+            chunk(b"IEND", b""))
+
+
+# A 2x5 RGB image with one row per filter type, filtered by hand (not by
+# filtered() above, so a predictor bug shared with png.py still fails).
+GOLDEN = [bytes(r) for r in (
+    (10, 20, 30, 40, 50, 60),
+    (15, 25, 35, 200, 10, 70),
+    (20, 20, 20, 100, 100, 100),
+    (30, 200, 60, 90, 80, 7),
+    (50, 10, 113, 100, 0, 255),
+)]
+GOLDEN_RAW = bytes([
+    0, 10, 20, 30, 40, 50, 60,          # None: as is
+    # Sub, a = the byte 3 to the left: 15 25 35, 200-15, 10-25+256, 70-35.
+    1, 15, 25, 35, 185, 241, 35,
+    # Up, b = the byte above: 20-15, 20-25+256, 20-35+256, 100-200+256, 100-10, 100-70.
+    2, 5, 251, 241, 156, 90, 30,
+    # Average, (a + b) >> 1 without wrapping. Pixel 0 (a = 0, b = 20): 30-10,
+    # 200-10, 60-10. Pixel 1: 90-(30+100)/2 = 25, 80-(200+100)/2+256 = 186
+    # (a wrapped sum would give 22), 7-(60+100)/2+256 = 183.
+    3, 20, 190, 50, 25, 186, 183,
+    # Paeth, p = a + b - c, predict whichever of a, b, c is nearest p (ties:
+    # a, then b). Pixel 0 (a = c = 0): b, so 50-30, 10-200+256, 113-60.
+    # Then a=50 b=90 c=30: p 110, distances 60 20 80, b: 100-90 = 10.
+    # a=10 b=80 c=200: p -110, distances 120 190 310, a: 0-10+256 = 246.
+    # a=113 b=7 c=60: p 60, distances 53 53 0, c: 255-60 = 195.
+    4, 20, 66, 53, 10, 246, 195,
+])
 
 
 class Png(unittest.TestCase):
@@ -60,9 +97,48 @@ class Png(unittest.TestCase):
         want = [b"".join(row[i:i + 3] + b"\xff" for i in range(0, 12, 3)) for row in rgb]
         self.assertEqual(rows, want)
 
+    def test_golden_filters(self):
+        path = self.tmp / "g.png"
+        path.write_bytes(png_of(2, 5, GOLDEN_RAW))
+        want = [r[:3] + b"\xff" + r[3:] + b"\xff" for r in GOLDEN]
+        self.assertEqual(png.read(path), (2, 5, want))
+
+    def test_read_rgba_all_filters(self):
+        rgba = [bytes((x * 61 + y * 37 + c * 89) % 256 for x in range(4) for c in range(4))
+                for y in range(5)]
+        path = self.tmp / "rgba.png"
+        path.write_bytes(rgb_png(4, rgba, [1, 2, 3, 4, 0], bpp=4))
+        self.assertEqual(png.read(path), (4, 5, rgba))
+
+    def test_several_idat_chunks(self):
+        z = zlib.compress(GOLDEN_RAW)
+        path = self.tmp / "multi.png"
+        path.write_bytes(png_of(2, 5, GOLDEN_RAW, idat=[z[:3], z[3:10], b"", z[10:]]))
+        self.assertEqual(png.read(path)[2][4], bytes([50, 10, 113, 255, 100, 0, 255, 255]))
+
+    def test_broken_files(self):
+        good = png_of(2, 5, GOLDEN_RAW)
+        ihdr = good[8:8 + 25]
+        iend = chunk(b"IEND", b"")
+        cases = {
+            "truncated": good[:40],
+            "truncated (no IEND)": good[:-len(iend)],
+            "bad image data": png_of(2, 5, GOLDEN_RAW, idat=b"\x78\x9c not zlib"),
+            "bad filter type 5": png_of(2, 5, bytes([5]) + GOLDEN_RAW[1:]),
+            "bytes of image data, expected 35": png_of(2, 5, GOLDEN_RAW[:-1]),
+            "first chunk is b'IDAT', not IHDR": good[:8] + good[33:],
+            "second IHDR": good[:33] + ihdr + good[33:],
+        }
+        for msg, data in cases.items():
+            with self.subTest(msg):
+                path = self.tmp / "broken.png"
+                path.write_bytes(data)
+                with self.assertRaisesRegex(ValueError, re.escape(msg)):
+                    png.read(path)
+
     def test_bad_crc(self):
         data = bytearray(rgb_png(2, [bytes(6)], [0]))
-        data[29] ^= 1                                   # last byte of the IHDR CRC
+        data[29] ^= 1                                   # first byte of the IHDR CRC
         path = self.tmp / "bad.png"
         path.write_bytes(bytes(data))
         with self.assertRaisesRegex(ValueError, "CRC"):

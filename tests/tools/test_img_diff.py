@@ -81,6 +81,23 @@ class ImgDiff(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("img_diff:", err)
 
+    def test_refuses_mask_over_an_input(self):
+        b = self.write("b.png", image())
+        (self.tmp / "sub").mkdir()
+        (self.tmp / "link.png").hardlink_to(b)
+        for mask in (self.a, self.tmp / "sub/../b.png", self.tmp / "link.png"):
+            with self.subTest(mask):
+                code, _, err = self.run_main(self.a, b, "--mask", mask)
+                self.assertEqual(code, 2)
+                self.assertIn("refusing --mask", err)
+        self.assertEqual(png.read(self.a), png.read(b))
+
+    def test_negative_tolerance(self):
+        with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as e:
+            img_diff.main([str(self.a), str(self.a), "--tolerance", "-1"])
+        self.assertEqual(e.exception.code, 2)
+        self.assertIn("--tolerance", err.getvalue())
+
     def test_command_line(self):
         r = subprocess.run([sys.executable, str(TOOL), str(self.a), str(self.a)],
                            capture_output=True, text=True)

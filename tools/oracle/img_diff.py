@@ -6,7 +6,8 @@ of the pixels where any RGB channel differs by more than --tolerance.
 --mask writes those pixels red over a dimmed copy of the first image.
 
 Exit 0 if the images are identical or the PSNR is at least --psnr-min,
-1 otherwise, 2 if the sizes differ or a file cannot be read.
+1 otherwise, 2 if the sizes differ, a file cannot be read or --mask is one
+of the inputs.
 
 Usage:
   tools/oracle/img_diff.py build/oracle/khbbs-frame-600.png \\
@@ -15,7 +16,7 @@ Usage:
 import argparse, math, pathlib, sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from oracle import png  # noqa: E402
+from oracle import png, snapshot  # noqa: E402
 
 RED = b"\xff\x00\x00\xff"
 
@@ -60,15 +61,26 @@ def mask_rows(a, diff):
     return out
 
 
+def tolerance(text):
+    n = int(text)
+    if n < 0:
+        raise argparse.ArgumentTypeError(f"{text}: want a channel difference >= 0")
+    return n
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("a")
     ap.add_argument("b")
     ap.add_argument("--mask", help="write a PNG of the differing pixels")
     ap.add_argument("--psnr-min", type=float, default=40.0, help="pass threshold in dB (default 40)")
-    ap.add_argument("--tolerance", type=int, default=2,
+    ap.add_argument("--tolerance", type=tolerance, default=2,
                     help="largest channel difference that does not count (default 2)")
     args = ap.parse_args(argv)
+    for x in (args.a, args.b):
+        if args.mask and snapshot.same_file(args.mask, x):
+            print(f"img_diff: refusing --mask {args.mask}: it is also {x}", file=sys.stderr)
+            return 2
     try:
         a, b = png.read(args.a), png.read(args.b)
     except (OSError, ValueError) as e:

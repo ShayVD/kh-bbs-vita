@@ -424,6 +424,8 @@ compared on every argument and `v0`, and the report says so. Usage and the
   against 1,196 `gpu.stats.get` feed events in 20 s; the 12 extra flips
   are unexplained, and the feed has no frame index).
   `sceDisplayWaitVblankStart` is called once, so it is no frame counter.
+  A game that calls `sceDisplaySetFrameBuf` more than once per vblank
+  shifts the count: frame N is then no longer the N-th frame shown.
 - The trace also has a breakpoint on that stub, and adding a breakpoint
   replaces the one at the same address. So during frame capture it is
   `enabled: true, log: true` with the trace's `logFormat`: checked, it both
