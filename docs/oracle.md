@@ -89,9 +89,11 @@ Checked on this machine:
 
 - If 45045 is taken, PPSSPP silently listens on a random port (and would
   save that port into the ini if it quit cleanly). Check with
-  `lsof -nP -iTCP:45045 -sTCP:LISTEN`. The session's own check ignores a
-  `TIME_WAIT` from an earlier run (after a run `netstat -an` shows one, on
-  our side of the connection).
+  `lsof -nP -iTCP:45045 -sTCP:LISTEN`. After a run `netstat -an` shows a
+  `TIME_WAIT` on our side of the connection: it sits on our ephemeral port
+  and does not block 45045. The session's check binds with `SO_REUSEADDR`,
+  so a `TIME_WAIT` on PPSSPP's side (for example after it crashed) does not
+  count either.
 - From reading PPSSPP's source (not checked with a packet capture): while
   this server runs, PPSSPP sends its local IP address and port to its own
   matchmaking host (`/match/update?local=IP&port=PORT`), every 9 minutes. It

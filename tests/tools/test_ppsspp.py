@@ -1,11 +1,11 @@
 """ppsspp.py's request/ticket protocol against FakePpsspp. Never starts PPSSPP."""
-import os, pathlib, socket, stat, sys, tempfile, time, unittest
+import json, pathlib, socket, stat, subprocess, sys, tempfile, threading, time, unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "tools"))
 from fakeppsspp import FakePpsspp  # noqa: E402
-from test_ws import Server, read_client_frame  # noqa: E402
+from test_ws import Server, frame, read_client_frame  # noqa: E402
 from oracle import ppsspp  # noqa: E402
 from oracle.ppsspp import Ppsspp, PpssppError, isolated_env, port_free, prepare_home  # noqa: E402
 
@@ -159,6 +159,69 @@ class PpssppTest(unittest.TestCase):
         p.send("poke")
         time.sleep(0.2)
         self.assertEqual(p.next_event("game.pause", 0)["event"], "game.pause")  # arrived, unread
+        p.close()
+        srv.join_checked(self)
+
+    def test_lone_ping_keeps_the_session(self):
+        """A ping and then silence: answered, the wait times out, the session stays usable."""
+        got = []
+
+        def script(conn):
+            conn.sendall(frame(0x9, b"hi"))
+            got.append(read_client_frame(conn))                    # pong
+            op, data = read_client_frame(conn)
+            conn.sendall(frame(0x1, json.dumps(reply(json.loads(data), version="v1.20.4")).encode()))
+            read_client_frame(conn)                                # close
+
+        srv = Server(script, status=b"HTTP/1.1 101 OK")
+        self.addCleanup(srv.sock.close)
+        srv.start()
+        p = self.connect(srv)
+        with self.assertRaisesRegex(PpssppError, "timed out after 0.3 s waiting"):
+            p.wait_stepping(0.3)
+        self.assertEqual(p.request("version")["version"], "v1.20.4")
+        p.close()
+        srv.join_checked(self)
+        self.assertEqual(got, [(0xA, b"hi")])
+
+    def test_deadline_holds_while_events_stream(self):
+        stop = threading.Event()
+        self.addCleanup(stop.set)
+
+        batch = frame(0x1, b'{"event": "gpu.stats.get", "fps": 60}') * 50
+
+        def script(conn):
+            end = time.monotonic() + 3                             # so a broken deadline fails, not hangs
+            while not stop.is_set() and time.monotonic() < end:    # faster than the client reads
+                try:
+                    conn.sendall(batch)
+                except OSError:
+                    return                                         # the client has gone
+
+        srv = Server(script, status=b"HTTP/1.1 101 OK")
+        self.addCleanup(srv.sock.close)
+        srv.start()
+        p = self.connect(srv)
+        t = time.monotonic()
+        with self.assertRaisesRegex(PpssppError, "timed out"):
+            p.wait_stepping(0.3)
+        self.assertLess(time.monotonic() - t, 0.8)
+        self.assertGreater(len(p.events), 10)
+        p.close()
+        stop.set()
+        srv.join_checked(self)
+
+    def test_pause_shares_one_deadline(self):
+        def slow_status(m):
+            time.sleep(0.3)
+            return reply(m, stepping=False, paused=False, pc=0x08A8C000, ticks=5)
+
+        srv = self.serve({"cpu.status": slow_status, "cpu.stepping": lambda m: []})
+        p = self.connect(srv)
+        t = time.monotonic()
+        with self.assertRaisesRegex(PpssppError, "timed out"):
+            p.pause(timeout=0.5)
+        self.assertLess(time.monotonic() - t, 0.7)                 # not 0.3 + 0.5
         p.close()
         srv.join_checked(self)
 
@@ -361,13 +424,29 @@ class LaunchTest(unittest.TestCase):
         with self.assertRaisesRegex(PpssppError, "exited with 3"):
             Ppsspp.launch(self.iso, self.home, port=free_port(), wait=5, root=self.root)
 
+    def spawned(self):
+        """Record every process launch() starts."""
+        procs, real = [], subprocess.Popen
+        patcher = mock.patch.object(ppsspp.subprocess, "Popen",
+                                    wraps=lambda *a, **kw: procs.append(real(*a, **kw)) or procs[-1])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return procs
+
     def test_debugger_never_opens(self):
-        pidfile = self.root / "pid"
-        self.app(f"echo $$ > '{pidfile}'\nexec sleep 60\n")
+        self.app("exec sleep 60\n")
+        procs = self.spawned()
         with self.assertRaisesRegex(PpssppError, "did not open the debugger"):
             Ppsspp.launch(self.iso, self.home, port=free_port(), wait=0.5, root=self.root)
-        with self.assertRaises(ProcessLookupError):
-            os.kill(int(pidfile.read_text()), 0)
+        self.assertEqual(len(procs), 1)
+        self.assertIsNotNone(procs[0].returncode, "the process was stopped and reaped")
+
+    def test_stop_failure_keeps_the_launch_error(self):
+        self.app("exit 3\n")
+        with mock.patch.object(ppsspp, "_stop", side_effect=PpssppError("stuck")):
+            with self.assertRaisesRegex(PpssppError, "exited with 3") as cm:
+                Ppsspp.launch(self.iso, self.home, port=free_port(), wait=5, root=self.root)
+        self.assertIn("stopping PPSSPP failed too: PpssppError('stuck')", cm.exception.__notes__)
 
     def test_busy_port_leaves_the_home_alone(self):
         self.app("exit 0\n")

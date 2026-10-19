@@ -5,7 +5,7 @@ How PPSSPP is pointed at build/oracle/ppsspp-home instead of the user's own
 config, the ini that makes the debugger listen, and every message used here
 are documented in docs/oracle.md (found by P2 Task 1).
 """
-import base64, collections, json, os, pathlib, select, shutil, socket, subprocess, time
+import base64, collections, json, os, pathlib, shutil, socket, subprocess, time
 
 from .ws import WebSocket
 
@@ -83,11 +83,14 @@ class Ppsspp:
             p.ignore = NOISE
             p._drop(*NOISE)
             return p
-        except BaseException:
-            if p:
-                p.close()
-            else:
-                _stop(proc)
+        except BaseException as e:
+            try:
+                if p:
+                    p.close()
+                else:
+                    _stop(proc)
+            except BaseException as stop_error:                   # keep `e` as the error raised
+                e.add_note(f"stopping PPSSPP failed too: {stop_error!r}")
             raise
 
     @classmethod
@@ -128,7 +131,7 @@ class Ppsspp:
 
     def next_event(self, name=None, timeout=None):
         """The next queued or incoming event (of type `name`, if given).
-        `timeout` 0 only takes what has already arrived. A timeout raises
+        `timeout` 0 takes a queued event or at most one waiting message. A timeout raises
         PpssppError; in the rare case it hits in the middle of a frame the
         connection is unusable afterwards (close the session)."""
         return self._wait(lambda m: name is None or m.get("event") == name, timeout,
@@ -152,14 +155,18 @@ class Ppsspp:
 
     def pause(self, timeout=None):
         """Stop the game (if it runs) and return the pc. Queued `cpu.stepping`
-        events are dropped either way. Timeouts as in next_event."""
-        status = self._request("cpu.status", timeout, {})
+        events are dropped either way. `timeout` covers the whole call;
+        timeouts as in next_event."""
+        limit = self.timeout if timeout is None else timeout
+        deadline = time.monotonic() + limit
+        status = self._request("cpu.status", limit, {})
         self._drop("cpu.stepping")
         if status["stepping"]:
             return status["pc"]
         ticket = self.send("cpu.stepping")
         msg = self._wait(lambda m: m.get("ticket") == ticket or
-                         (m.get("event") == "cpu.stepping" and "ticket" not in m), timeout, "cpu.stepping")
+                         (m.get("event") == "cpu.stepping" and "ticket" not in m),
+                         max(deadline - time.monotonic(), 0.0), "cpu.stepping")
         if msg.get("event") == "error":
             raise PpssppError(f"cpu.stepping: {msg.get('message')}")
         return msg["pc"]
@@ -231,10 +238,11 @@ class Ppsspp:
     def _wait(self, match, timeout, what):
         """The first queued, then the first incoming message that `match`es;
         every other message is queued (events in `self.ignore` are dropped).
+        The deadline holds even while unrelated messages keep arriving.
 
-        Between messages the wait is a select, so running out of time there
-        leaves the connection usable. A timeout inside a frame (data stopped
-        mid-message) leaves it unusable (ws.py)."""
+        Frames are read one at a time after a select, so running out of time
+        between frames leaves the connection usable. A timeout inside a frame
+        (data stopped mid-frame) leaves it unusable (ws.py)."""
         for i, m in enumerate(self.events):
             if match(m):
                 del self.events[i]
@@ -244,21 +252,21 @@ class Ppsspp:
         while True:
             left = max(deadline - time.monotonic(), 0.0)
             try:
-                if not self.ws.buf and not select.select([self.ws.sock], [], [], left)[0]:
-                    raise PpssppError(f"timed out after {limit} s waiting for {what}")
-                # A frame has started: give its rest at least a second.
+                # Once a frame has started, give its rest at least a second.
                 self.ws.sock.settimeout(max(left, 1.0))
-                m = json.loads(self.ws.recv_text())
+                text = self.ws.poll_text(left)
+                m = None if text is None else json.loads(text)
             except TimeoutError as e:
                 raise PpssppError(f"timed out after {limit} s inside a message while waiting "
                                   f"for {what}; the connection is unusable now") from e
             except (OSError, ValueError) as e:
                 raise self._error(f"waiting for {what}", e) from e
-            if m.get("event") in self.ignore:
-                continue
-            if match(m):
-                return m
-            self.events.append(m)
+            if m is not None and m.get("event") not in self.ignore:
+                if match(m):
+                    return m
+                self.events.append(m)
+            if time.monotonic() >= deadline:
+                raise PpssppError(f"timed out after {limit} s waiting for {what}")
 
     def _drop(self, *names):
         self.events = collections.deque(m for m in self.events if m.get("event") not in names)

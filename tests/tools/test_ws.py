@@ -240,6 +240,30 @@ class WsTest(unittest.TestCase):
         release.set()
         srv.join_checked(self)
 
+    def test_poll_text_reads_one_frame(self):
+        got = []
+        sent = threading.Event()
+
+        def script(conn):
+            conn.sendall(frame(0x9, b"hi") + frame(0x1, b"ab", fin=False) + frame(0x0, b"c"))
+            got.append(read_client_frame(conn))                    # pong
+            sent.wait(5)
+            conn.sendall(frame(0x1, b"later"))
+            read_client_frame(conn)                                # close
+
+        srv = self.serve(script)
+        ws = self.connect(srv)
+        self.assertIsNone(ws.poll_text(1))                         # the ping, answered
+        self.assertIsNone(ws.poll_text(1))                         # first fragment
+        self.assertEqual(ws.poll_text(1), "abc")
+        self.assertIsNone(ws.poll_text(0.2))                       # nothing: still usable
+        self.assertIsNone(ws.poll_text(0))
+        sent.set()
+        self.assertEqual(ws.recv_text(), "later")
+        ws.close()
+        srv.join_checked(self)
+        self.assertEqual(got[0], (0xA, b"hi"))
+
     def test_protocol_errors(self):
         cases = {
             "binary": frame(0x2, b"x"),

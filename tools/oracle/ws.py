@@ -4,7 +4,7 @@ Enough for PPSSPP's remote debugger: one connection, text messages, client
 masking, fragmented and large (64-bit length) server frames, ping/pong and
 close. No TLS, no extensions.
 """
-import base64, hashlib, os, socket, struct
+import base64, hashlib, os, select, socket, struct
 
 GUID = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 OP_CONT, OP_TEXT, OP_BIN, OP_CLOSE, OP_PING, OP_PONG = 0x0, 0x1, 0x2, 0x8, 0x9, 0xA
@@ -19,6 +19,7 @@ class WebSocket:
     def __init__(self, sock):
         self.sock = sock
         self.buf = bytearray()
+        self.parts = []                     # frames of a fragmented message so far
         self.broken = False
 
     @classmethod
@@ -95,45 +96,66 @@ class WebSocket:
         if self.broken:
             raise WebSocketError("connection unusable after error")
         try:
-            return self._recv_message()
+            while (text := self._recv_frame()) is None:
+                pass
+            return text
         except BaseException:
             self.broken = True
             raise
 
-    def _recv_message(self):
-        parts = []
-        while True:
-            b0, b1 = self._read_exact(2)
-            fin, opcode, n = b0 & 0x80, b0 & 0x0F, b1 & 0x7F
-            if n == 126:
-                n, = struct.unpack(">H", self._read_exact(2))
-            elif n == 127:
-                n, = struct.unpack(">Q", self._read_exact(8))
-            if opcode & 0x8 and (not fin or n > 125):
-                raise WebSocketError("bad control frame")
-            mask = self._read_exact(4) if b1 & 0x80 else None
-            data = self._read_exact(n)
-            if mask:
-                data = _xor_mask(data, mask)
-            if opcode == OP_PING:
-                self._send(OP_PONG, data)
-                continue
-            if opcode == OP_PONG:
-                continue
-            if opcode == OP_CLOSE:
-                raise WebSocketError("closed by peer")
-            if opcode == OP_CONT and not parts:
-                raise WebSocketError("continuation without a message")
-            if opcode == OP_TEXT and parts:
-                raise WebSocketError("new message inside a fragmented one")
-            if opcode not in (OP_CONT, OP_TEXT):
-                raise WebSocketError(f"unsupported opcode {opcode:#x}")
-            parts.append(data)
-            if fin:
-                try:
-                    return b"".join(parts).decode()
-                except UnicodeDecodeError as e:
-                    raise WebSocketError(f"message is not UTF-8: {e}") from e
+    def poll_text(self, timeout):
+        """Wait up to `timeout` seconds for data, then read at most one frame.
+
+        Returns the text message that frame completes, or None: nothing
+        arrived, or the frame was a ping (answered), a pong or part of a
+        fragmented message. Nothing arriving leaves the connection usable;
+        an error inside a frame breaks it, as in recv_text.
+        """
+        if self.broken:
+            raise WebSocketError("connection unusable after error")
+        if not self.buf and not select.select([self.sock], [], [], max(timeout, 0.0))[0]:
+            return None
+        try:
+            return self._recv_frame()
+        except BaseException:
+            self.broken = True
+            raise
+
+    def _recv_frame(self):
+        """Read one frame; the text message if it completes one, else None."""
+        b0, b1 = self._read_exact(2)
+        fin, opcode, n = b0 & 0x80, b0 & 0x0F, b1 & 0x7F
+        if n == 126:
+            n, = struct.unpack(">H", self._read_exact(2))
+        elif n == 127:
+            n, = struct.unpack(">Q", self._read_exact(8))
+        if opcode & 0x8 and (not fin or n > 125):
+            raise WebSocketError("bad control frame")
+        mask = self._read_exact(4) if b1 & 0x80 else None
+        data = self._read_exact(n)
+        if mask:
+            data = _xor_mask(data, mask)
+        if opcode == OP_PING:
+            self._send(OP_PONG, data)
+            return None
+        if opcode == OP_PONG:
+            return None
+        if opcode == OP_CLOSE:
+            raise WebSocketError("closed by peer")
+        if opcode == OP_CONT and not self.parts:
+            raise WebSocketError("continuation without a message")
+        if opcode == OP_TEXT and self.parts:
+            raise WebSocketError("new message inside a fragmented one")
+        if opcode not in (OP_CONT, OP_TEXT):
+            raise WebSocketError(f"unsupported opcode {opcode:#x}")
+        self.parts.append(data)
+        if not fin:
+            return None
+        raw, self.parts = b"".join(self.parts), []
+        try:
+            return raw.decode()
+        except UnicodeDecodeError as e:
+            raise WebSocketError(f"message is not UTF-8: {e}") from e
 
     def close(self):
         try:
