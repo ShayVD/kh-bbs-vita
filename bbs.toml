@@ -1,0 +1,26 @@
+# KH Birth by Sleep, ULUS10505 v1.00. Every address in this file is a v1.00
+# address. tools/bbs_seeds.py turns [discovery] into the recompiler's seeds
+# file at build time; tools/merge_misses.py adds to discovery.entries.
+
+[target]
+# SHA-1 of game/EBOOT.dec.ELF, as in tools/target.sha1.
+eboot_sha1 = "fd68f8dcd544fc2ae20028dedf59a67a6f012d38"
+
+[discovery]
+# Function entries that only a pointer reaches, and that neither the jal
+# harvest nor the address-pair and data-pointer scans find. One per line,
+# with where the pointer comes from.
+entries = [
+    # BEGIN merge_misses: tools/merge_misses.py adds entries here
+    # END merge_misses
+]
+
+# Tables of code pointers: every non-zero word, `stride` bytes apart, is a
+# function entry. A table is a whole section, or `addr` + `count`.
+
+[[discovery.tables]]
+# 100 (function, 0) slots holding 99 constructors; the last slot is null.
+# crt0 runs them. .ctors is empty in this game. The data-pointer scan
+# already finds all 99; listing the table makes that independent of the scan.
+section = ".cplinit"
+stride = 8

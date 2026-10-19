@@ -8,6 +8,19 @@ endif()
 
 set(KHBBS_SPLIT 64)
 set(KHBBS_GEN_DIR "${CMAKE_BINARY_DIR}/gen")
+
+# bbs.toml -> seeds file for the recompiler (tools/bbs_seeds.py; needs tomllib).
+find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
+set(KHBBS_TOML "${PROJECT_SOURCE_DIR}/bbs.toml")
+set(KHBBS_SEEDS "${KHBBS_GEN_DIR}/seeds.txt")
+add_custom_command(
+    OUTPUT "${KHBBS_SEEDS}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${KHBBS_GEN_DIR}"
+    COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tools/bbs_seeds.py"
+            "${KHBBS_TOML}" "${KHBBS_ELF}" -o "${KHBBS_SEEDS}"
+    DEPENDS "${PROJECT_SOURCE_DIR}/tools/bbs_seeds.py" "${KHBBS_TOML}" "${KHBBS_ELF}"
+    COMMENT "Seeds from bbs.toml"
+    VERBATIM)
 set(KHBBS_GEN_SRCS "${KHBBS_GEN_DIR}/main_register.c" "${KHBBS_GEN_DIR}/main_imports.c")
 math(EXPR _last "${KHBBS_SPLIT} - 1")
 foreach(i RANGE 0 ${_last})
@@ -25,7 +38,8 @@ add_custom_command(
     OUTPUT ${KHBBS_GEN_SRCS} "${KHBBS_GEN_DIR}/main_funcs.h"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${KHBBS_GEN_DIR}"
     COMMAND $<TARGET_FILE:allegrexrecomp> emit "${KHBBS_ELF}" "${KHBBS_GEN_DIR}" main --split ${KHBBS_SPLIT}
-    DEPENDS allegrexrecomp "${KHBBS_ELF}"
+            --seeds "${KHBBS_SEEDS}"
+    DEPENDS allegrexrecomp "${KHBBS_ELF}" "${KHBBS_SEEDS}"
     COMMENT "Recompiling ${KHBBS_ELF}"
     VERBATIM)
 

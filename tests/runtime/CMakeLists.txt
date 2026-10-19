@@ -9,6 +9,16 @@ target_link_libraries(test_trace PRIVATE khbbs_runtime)
 add_test(NAME trace COMMAND test_trace WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 target_compile_options(test_trace PRIVATE -Wall -Wextra)
 
+add_executable(test_args test_args.c)
+target_link_libraries(test_args PRIVATE khbbs_runtime)
+add_test(NAME args COMMAND test_args WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+target_compile_options(test_args PRIVATE -Wall -Wextra)
+
+add_executable(test_misslog test_misslog.c)
+target_link_libraries(test_misslog PRIVATE khbbs_runtime)
+add_test(NAME misslog COMMAND test_misslog WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+target_compile_options(test_misslog PRIVATE -Wall -Wextra)
+
 # test_boot forks to check the post-boot miss handler.
 if(UNIX)
     add_executable(test_boot test_boot.c)

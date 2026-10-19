@@ -25,7 +25,7 @@ together.
 
 | Directory | Upstream | Commit | Licence | Used for |
 |---|---|---|---|---|
-| `third_party/psprecomp` | github.com/ShayVD/psprecomp, branch `khbbs` (fork of sp00nznet/psprecomp `caca759`) | `b925bd2` | MIT | recompiler (`allegrexrecomp`) and runtime base |
+| `third_party/psprecomp` | github.com/ShayVD/psprecomp, branch `khbbs` (fork of sp00nznet/psprecomp `caca759`) | `0a1a2ec` | MIT | recompiler (`allegrexrecomp`) and runtime base |
 | `third_party/pspdecrypt` | github.com/John-K/pspdecrypt | `c156627` | GPL-3.0 | decrypting `EBOOT.BIN`, **as a separate process only**; it is never linked |
 | `third_party/vdpm` | VitaSDK package manager | (as installed) | | installing VitaSDK packages |
 
@@ -68,6 +68,7 @@ tools/tc mips-linux-gnu-objdump -d -M no-aliases build/probe/m.o
 | ghidra-allegrex | v21.4 (built for Ghidra 12.1.3) | `~/Tools/ghidra_12.1.3_PUBLIC/Ghidra/Extensions/ghidra-allegrex` | headless import of `EBOOT.dec.ELF` selects `Allegrex:LE:32:default` |
 | VitaSDK | 2026.08 | `$VITASDK` = `/usr/local/vitasdk` | vitaGL, vitaShaRK, libmathneon, SDL2, imgui, … installed |
 | Homebrew SDL2, openssl@3 | prebuilt | `/opt/homebrew` | no source builds |
+| Python | 3.11 or newer (`tomllib`) | Homebrew `python3` | for the `tools/*.py` scripts, their tests and the game build (`bbs_seeds.py`); macOS's `/usr/bin/python3` is 3.9 and is too old |
 
 Headless Ghidra:
 

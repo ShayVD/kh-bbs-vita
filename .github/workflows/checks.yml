@@ -18,8 +18,9 @@ jobs:
         run: tools/check_no_assets.sh
       - name: Tool scripts parse
         run: |
-          python3 -m py_compile tools/import_report.py
+          python3 -m py_compile tools/import_report.py tools/unimpl_census.py tools/bbs_seeds.py tools/merge_misses.py
           bash -n tools/extract_game.sh tools/check_no_assets.sh
+          python3 -m unittest discover -s tests/tools -v
 
   runtime:
     # Runtime unit tests on synthetic data; no game files exist in CI.
@@ -35,4 +36,6 @@ jobs:
           cmake -S . -B build/ci -G Ninja -DKHBBS_WITH_GAME=OFF
           cmake --build build/ci
       - name: Test
-        run: ctest --test-dir build/ci --output-on-failure
+        run: |
+          ctest --test-dir build/ci --output-on-failure
+          ctest --test-dir third_party/psprecomp/build --output-on-failure
