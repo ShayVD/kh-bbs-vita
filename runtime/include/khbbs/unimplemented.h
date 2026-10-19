@@ -10,4 +10,9 @@
  * trace, then abort()s. Never returns. */
 void psp_unimplemented(uint32_t addr, const char *what);
 
+/* Make every VFPU trap fatal (through psp_unimplemented). Call once at
+ * start-up. The address a VFPU trap reports is psp_cpu.pc, which is exact
+ * only at dispatch boundaries. */
+void khbbs_install_traps(void);
+
 #endif

@@ -4,6 +4,7 @@
 #include "khbbs/unimplemented.h"
 #include "khbbs/trace.h"
 #include "psprecomp/dispatch.h"
+#include "psprecomp/vfpu.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,3 +16,13 @@ void psp_unimplemented(uint32_t addr, const char *what) {
     khbbs_trace_flush();
     abort();
 }
+
+/* A VFPU trap (a matrix op with a prefix pending, an unknown selector) would
+ * otherwise print and run on with the destination unwritten. */
+static void vfpu_trap(uint32_t addr, const char *what) {
+    char buf[64];
+    snprintf(buf, sizeof buf, "VFPU %s", what);
+    psp_unimplemented(addr, buf);
+}
+
+void khbbs_install_traps(void) { psp_vfpu_set_trap_handler(vfpu_trap); }

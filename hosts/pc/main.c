@@ -5,6 +5,7 @@
 #include "khbbs/loader.h"
 #include "khbbs/misslog.h"
 #include "khbbs/trace.h"
+#include "khbbs/unimplemented.h"
 #include "psprecomp/dispatch.h"
 #include "psprecomp/hle.h"
 #include "psprecomp/mem.h"
@@ -46,6 +47,7 @@ int main(int argc, char **argv) {
 
     if (psp_mem_init() != 0) { fprintf(stderr, "khbbs: out of memory\n"); return 1; }
     psp_hle_init();
+    khbbs_install_traps();
     psp_recomp_register();
     if (trace && khbbs_trace_open(trace) != 0) return 1;
     if (misslog && khbbs_misslog_open(misslog) != 0) return 1;
