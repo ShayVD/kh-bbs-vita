@@ -10,6 +10,11 @@
  * trace, then abort()s. Never returns. */
 void psp_unimplemented(uint32_t addr, const char *what);
 
+/* The guest executed `break` (an assert in the game). During khbbs_boot this
+ * stops the run with KHBBS_GUEST_BREAK; outside it, it aborts like
+ * psp_unimplemented. Defined in boot.c, which owns the stop. */
+void psp_break(uint32_t addr, uint32_t code);
+
 /* Make every VFPU trap fatal (through psp_unimplemented). Every host must
  * call it once at start-up (hosts/pc does; hosts/vita must too), or a trap
  * only prints and the run carries on with wrong values. The address a VFPU

@@ -23,8 +23,9 @@ static int usage(void) {
             "               [--miss-log <file.jsonl>] [--keep-going N]\n"
             "exit status: 0 the entry point returned; 3 the run stopped at its first\n"
             "dispatch miss or on budget; 4 it carried on past a miss (--keep-going) and then\n"
-            "returned, ran out of budget or stopped at a later miss, so only its first\n"
-            "miss is trustworthy; 2 bad usage; 1 other failure\n");
+            "returned, ran out of budget, hit a guest break or stopped at a later miss, so\n"
+            "only its first miss is trustworthy; 5 the game executed `break` (a failed\n"
+            "assert) and no miss was stepped over before it; 2 bad usage; 1 other failure\n");
     return 2;
 }
 
@@ -62,15 +63,17 @@ int main(int argc, char **argv) {
                                 &(khbbs_boot_opts){ .budget = budget, .keep_going = (uint32_t)keep });
     printf("khbbs: stopped: %s", khbbs_stop_name(r.why));
     if (r.why == KHBBS_DISPATCH_MISS) printf(" at 0x%08X", r.addr);
+    if (r.why == KHBBS_GUEST_BREAK) printf(" at 0x%08X (code 0x%05X)", r.addr, r.code);
     printf("  (%llu dispatches", (unsigned long long)r.calls);
     if (trace) printf(", %llu traced firmware calls", (unsigned long long)khbbs_trace_count());
     if (r.misses) printf(", %" PRIu32 " distinct misses", r.misses);
     printf(")\n");
     fflush(stdout);
-    if (r.why == KHBBS_DISPATCH_MISS) psp_miss_context();
+    if (r.why == KHBBS_DISPATCH_MISS || r.why == KHBBS_GUEST_BREAK) psp_miss_context();
     if (trace && khbbs_trace_close() != 0) fprintf(stderr, "khbbs: trace write failed\n");
     if (misslog && khbbs_misslog_close() != 0) fprintf(stderr, "khbbs: miss log write failed\n");
     /* A run that carried on past a miss ran on made-up results (boot.h). */
     if (r.misses > (r.why == KHBBS_DISPATCH_MISS ? 1u : 0u)) return 4;
+    if (r.why == KHBBS_GUEST_BREAK) return 5;
     return r.why == KHBBS_RETURNED ? 0 : 3;
 }

@@ -1,6 +1,7 @@
 #include "khbbs/boot.h"
 #include "khbbs/misslog.h"
 #include "khbbs/trace.h"
+#include "khbbs/unimplemented.h"
 #include "psprecomp/cpu.h"
 #include "psprecomp/dispatch.h"
 #include "psprecomp/mem.h"
@@ -8,6 +9,7 @@
 #include <setjmp.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Boot-time scratch in the "kernel" partition (docs/architecture.md, Memory):
@@ -19,6 +21,9 @@
 static jmp_buf g_stop;
 static khbbs_result g_res;
 static uint32_t g_keep_going;
+/* Set only while g_stop is live (between setjmp and the end of the run), so
+ * psp_break can tell a longjmp target exists. */
+static volatile int g_running;
 
 /* Targets already missed in this run, so a target missed again (a loop, or a
  * table of callers) neither counts against --keep-going nor repeats in the
@@ -56,6 +61,20 @@ static void on_miss(uint32_t addr) {
     }
     g_res.why = KHBBS_DISPATCH_MISS;
     g_res.addr = addr;
+    longjmp(g_stop, 1);
+}
+
+void psp_break(uint32_t addr, uint32_t code) {
+    fflush(stdout);
+    fprintf(stderr, "khbbs: guest break at 0x%08X (code 0x%05X)\n", addr, code);
+    if (!g_running) {                    /* no boot to stop: behave like psp_unimplemented */
+        psp_miss_context();
+        khbbs_trace_flush();
+        abort();
+    }
+    g_res.why = KHBBS_GUEST_BREAK;
+    g_res.addr = addr;
+    g_res.code = code;
     longjmp(g_stop, 1);
 }
 
@@ -97,10 +116,12 @@ khbbs_result khbbs_boot(const khbbs_image *img, const char *path, const khbbs_bo
      * this also clears a limit left by an earlier boot. */
     psp_dispatch_set_budget(budget ? budget : UINT64_MAX, on_budget);
 
+    g_running = 1;
     if (setjmp(g_stop) == 0) {
         psp_dispatch(img->entry);
         g_res.why = KHBBS_RETURNED;
     }
+    g_running = 0;                      /* every way out lands here: return, miss, budget, break */
     g_res.calls = psp_dispatch_calls();
     /* on_miss/on_budget longjmp into g_stop, which is dead once we return.
      * psprecomp has no getter, so the previous miss handler cannot be
@@ -118,6 +139,7 @@ const char *khbbs_stop_name(khbbs_stop s) {
     case KHBBS_DISPATCH_MISS: return "dispatch miss";
     case KHBBS_BUDGET:        return "dispatch budget exhausted";
     case KHBBS_BAD_ARGS:      return "bad boot arguments";
+    case KHBBS_GUEST_BREAK:   return "guest break (game assertion)";
     }
     return "?";
 }
