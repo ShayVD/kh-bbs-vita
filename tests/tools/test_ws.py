@@ -2,7 +2,7 @@
 import base64, hashlib, pathlib, socket, struct, sys, threading, unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "tools"))
-from oracle.ws import WebSocket, WebSocketError, _xor_mask  # noqa: E402
+from oracle.ws import WebSocket, WebSocketError  # noqa: E402
 
 GUID = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
@@ -30,7 +30,7 @@ def read_client_frame(conn):
         n, = struct.unpack(">Q", conn.recv(8, socket.MSG_WAITALL))
     mask = conn.recv(4, socket.MSG_WAITALL)
     data = conn.recv(n, socket.MSG_WAITALL) if n else b""
-    return b0 & 0x0F, _xor_mask(data, mask)
+    return b0 & 0x0F, bytes(c ^ mask[i & 3] for i, c in enumerate(data))
 
 
 class Server(threading.Thread):
@@ -190,7 +190,7 @@ class WsTest(unittest.TestCase):
 
     def test_masked_server_frame_is_tolerated(self):
         mask = b"\x01\x02\x03\x04"
-        srv = self.serve(lambda conn: conn.sendall(bytes([0x81, 0x80 | 5]) + mask + _xor_mask(b"hello", mask)))
+        srv = self.serve(lambda conn: conn.sendall(bytes([0x81, 0x80 | 5]) + mask + bytes(c ^ mask[i & 3] for i, c in enumerate(b"hello"))))
         ws = self.connect(srv)
         self.assertEqual(ws.recv_text(), "hello")
         srv.join_checked(self)
