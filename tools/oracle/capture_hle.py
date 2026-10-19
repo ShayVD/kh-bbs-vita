@@ -156,9 +156,13 @@ def capture(p, n, out_path, stubs, sites, timeout=120.0, poll=0.05):
                     out.append(rec)
                 if rec["ret"] is not None:
                     completed += 1
-    finally:
-        if p.proc is None or p.proc.poll() is None:   # a dead PPSSPP cannot pause
-            p.pause()
+    except BaseException as e:
+        try:
+            _pause(p)
+        except BaseException as pe:                    # keep `e` as the error raised
+            e.add_note(f"pausing failed too: {pe!r}")
+        raise
+    _pause(p)
     out_path = pathlib.Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
@@ -174,6 +178,11 @@ def capture(p, n, out_path, stubs, sites, timeout=120.0, poll=0.05):
         print(f"capture_hle: timed out after {timeout} s with {completed} of {n} calls returned",
               file=sys.stderr)
     return returned
+
+
+def _pause(p):
+    if p.proc is None or p.proc.poll() is None:       # a dead PPSSPP cannot pause
+        p.pause()
 
 
 def main():

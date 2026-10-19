@@ -8,6 +8,7 @@ from elfgen import MODULE_STUBS, MODULE_TEXT, make_module_elf  # noqa: E402
 from import_report import nid_of  # noqa: E402
 from oracle import capture_hle, imports  # noqa: E402
 from oracle.capture_hle import CaptureError  # noqa: E402
+from oracle.ppsspp import PpssppError  # noqa: E402
 
 PREFIX = "00:12:117              N[JIT]: Debugger/Breakpoints.cpp:309 BKP PC="
 ROOT, WORKER, IDLE = 0x113, 0x122, 0x110
@@ -320,6 +321,19 @@ class CaptureTest(unittest.TestCase):
             self.capture(p, 2)
         self.assertNotIn("pause", p.calls)
         self.assertFalse(self.out.exists())
+
+    def test_pause_failure_keeps_the_original_error(self):
+        class BrokenPause(FakeSession):
+            def resume(self):
+                self.calls.append("resume")
+
+            def pause(self):
+                raise PpssppError("pause broke")
+
+        p = BrokenPause(self.d / "missing-log.txt", "")
+        with self.assertRaises(FileNotFoundError) as cm:
+            self.capture(p, 2)
+        self.assertIn("pausing failed too: PpssppError('pause broke')", cm.exception.__notes__)
 
 
 if __name__ == "__main__":
