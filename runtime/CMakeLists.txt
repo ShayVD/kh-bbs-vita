@@ -3,6 +3,7 @@ add_library(khbbs_runtime STATIC
     args.c
     loader.c
     trace.c
+    snapshot.c
     misslog.c
     boot.c
     unimplemented.c

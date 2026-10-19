@@ -10,7 +10,7 @@ Read first, in order: docs/plan.md (roadmap P1–P10), docs/bringup.md (the P1 a
 
 ## Where we are (end of session 2026-10-19)
 
-- `cmake -S . -B build/pc -G Ninja && cmake --build build/pc` recompiles game/EBOOT.dec.ELF with our psprecomp fork (third_party/psprecomp, branch khbbs, pinned at ffa8319) seeded from bbs.toml, and builds build/pc/hosts/pc/khbbs in ~13 s.
+- `cmake -S . -B build/pc -G Ninja && cmake --build build/pc` recompiles game/EBOOT.dec.ELF with our psprecomp fork (third_party/psprecomp, branch khbbs, pinned at 34bab3c) seeded from bbs.toml, and builds build/pc/hosts/pc/khbbs in ~13 s.
 - `python3 tools/unimpl_census.py build/pc/gen` reports 0 untranslated sites and 0 unhandled branches (36 guest `break` sites, 55 undiscovered static call targets).
 - Run: `perl -e 'alarm shift; exec @ARGV' 280 build/pc/hosts/pc/khbbs --elf game/EBOOT.dec.ELF --budget 50000000 --miss-log build/misses.jsonl --keep-going 1000`. Don't pass `--trace` at that budget (17.5 GB); use `--budget 200000` for traces. Exit codes: 0 returned, 3 first miss/budget, 4 after stepped-over misses, 5 guest break.
 - It runs with zero dispatch misses until the budget: the `DiscInfoBind` thread loops on `sceIoOpen("umd1:")` → not found + `sceKernelDelayThreadCB`, and psprecomp's run-to-completion threads never switch back to `user_main`. A NULL write32 at 0x4 happens earlier inside 0x08AE9700 (called from crt0 at 0x08A8C0EC). psprecomp's sysmem still allocates at 0x08C00000, inside the game image.

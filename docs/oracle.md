@@ -220,6 +220,54 @@ too slow for tracing every call.
   functions). Keep the default; with `false`, 5,299 words of the first MiB
   of the EBOOT differed.
 
+### Snapshots
+
+The event is "just before the K-th call to firmware function NAME"
+(`NAME:K`, or `0xNID:K` for a NID khbbs has not implemented), because it
+means the same thing on both sides. Both write RAM `0x08000000`..`0x0A000000`
+raw plus a sidecar `FILE.json` (`base`, `size`, `event`, `side`, `nid`,
+`ra`):
+
+    mkdir -p build/oracle        # khbbs does not create the directory
+    build/pc/hosts/pc/khbbs --elf game/EBOOT.dec.ELF --budget 200000 \
+        --snapshot-at sceKernelCreateThread:1 --snapshot build/oracle/khbbs-mem.bin
+    tools/oracle/snapshot.py --iso "$KHBBS_ISO" --elf game/EBOOT.dec.ELF \
+        --at sceKernelCreateThread:1 -o build/oracle/ppsspp-mem.bin
+    tools/oracle/mem_diff.py build/oracle/khbbs-mem.bin build/oracle/ppsspp-mem.bin \
+        --elf game/EBOOT.dec.ELF --ignore 0x08000000-0x08800000
+
+The NAME form is not symmetric: `snapshot.py` also matches an import whose
+NID is the SHA-1 NID of NAME, `khbbs` only a function psprecomp has
+registered under NAME, so use `0xNID:K` for a function khbbs has not
+implemented. Events are at most 127 characters (khbbs's buffer); both
+`snapshot.py` and `oracle.py` refuse longer ones.
+
+`mem_diff.py` joins differing bytes into one range when at most `--gap`
+(default 16) equal bytes lie between them. A range never crosses a section,
+the edge of the image or partition, or an `--ignore` hole. Gaps between
+sections inside the image are labelled `image (no section)`.
+
+Both snapshot tools delete old copies of the dump and its sidecar first, and
+both again if writing fails. They refuse an output path that is one of their
+inputs. khbbs only warns when the snapshot never fired or failed (its exit
+status is the run's), so callers check that the sidecar exists.
+
+khbbs takes it in psprecomp's pre-call hook, PPSSPP at a stopping breakpoint
+on the import stub (about 1 s). At `sceKernelCreateThread:1` both had the
+same `ra` (`0x08A8BE30`), and `.data`, `.bss` and the rest of the image
+matched. What differed:
+
+- The kernel partition (680,429 bytes): PPSSPP's own kernel structures.
+  khbbs keeps its boot arguments and first stack there. Ignore it.
+- `.sceStub.text` (787 bytes): PPSSPP writes a `syscall` into each stub.
+- `.text`, 51 bytes in 9 ranges: PPSSPP code patches that `replacements`
+  did not put back (`0x68......` and `0x6A......` words, around the entry
+  function `0x08A8BD58` and at `0x0881EF68`, `0x08AE94FC`, `0x08AE95D0`,
+  `0x08AE9700`). Two of the ranges, near the entry function, span several
+  words: 16 bytes from `0x08A8BD8C` and 52 bytes from `0x08A8BDCC`.
+- `0x09FFFC00`..`0x0A000000` (776 bytes): PPSSPP's root thread stack (filled
+  with `0xFF`, thread uid `0x113` at its bottom). khbbs's stack is elsewhere.
+
 ## Firmware-call source
 
 **Choice: non-stopping log breakpoints on every import stub and on every
@@ -382,12 +430,30 @@ compared on every argument and `v0`, and the report says so. Usage and the
   against 1,196 `gpu.stats.get` feed events in 20 s; the 12 extra flips
   are unexplained, and the feed has no frame index).
   `sceDisplayWaitVblankStart` is called once, so it is no frame counter.
+  A game that calls `sceDisplaySetFrameBuf` more than once per vblank
+  shifts the count: frame N is then no longer the N-th frame shown.
 - The trace also has a breakpoint on that stub, and adding a breakpoint
   replaces the one at the same address. So during frame capture it is
   `enabled: true, log: true` with the trace's `logFormat`: checked, it both
   stops and writes its line.
 - Frame 300 shows the auto-save notice that waits for a button press (no
   save data on the fresh memory stick).
+
+`tools/oracle/frame.py` grabs frame N this way: a stopping breakpoint on the
+stub (no trace), `a0`/`a1`/`a2` read at the Nth stop, `bufferwidth * 272`
+pixels read from `topaddr`, converted by `tools/oracle/vram.py` and cropped
+to 480x272. `--raw FILE` keeps the VRAM bytes and `FILE.json`. Then
+`tools/oracle/img_diff.py` compares two frames (khbbs writes its own from
+P6):
+
+    tools/oracle/frame.py --iso "$KHBBS_ISO" --elf game/EBOOT.dec.ELF \
+        --frame 600 -o build/oracle/ppsspp-frame-600.png
+    tools/oracle/img_diff.py build/oracle/khbbs-frame-600.png \
+        build/oracle/ppsspp-frame-600.png --mask build/oracle/frame-600-mask.png
+
+Frame 600 (`0x04044000`, stride 512, format 1; about 22 s with the launch)
+still shows the auto-save notice: white text in a red box, "OK" button.
+Two runs gave identical PNGs.
 
 ## Determinism
 
@@ -402,3 +468,52 @@ auto-save notice), so only the boot up to there was tested. Real-time clock
 calls, input, save data and I/O timing settings can make runs differ, and
 wall-clock timing never matches `khbbs`. So comparisons key on events
 (per-thread call order, frame index), never on time.
+
+## Running it
+
+[tools/oracle/oracle.py](../tools/oracle/oracle.py) `first-divergence`
+runs both sides on the same boot and prints where they first disagree (the
+P2 gate):
+
+    PYTHONPATH=tools python3 -m oracle.oracle first-divergence \
+        --iso "$KHBBS_ISO" --elf game/EBOOT.dec.ELF -n 200 \
+        [--snapshot-at sceKernelCreateThread:1]
+
+In order: `khbbs` under the perl alarm wrapper with `--budget` and
+`--trace`, `capture_hle -n N`, with `--snapshot-at` also `snapshot.py`,
+then `trace_diff.py --map-uids -n N` and, with `--snapshot-at`,
+`mem_diff.py --elf ELF --ignore 0x08000000-0x08800000` (the kernel
+partition, see Snapshots). Each runs as `python3 -m oracle.X` with
+`tools/` on `PYTHONPATH`, and both reports are printed as they are.
+
+Options: `--iso` (default `$KHBBS_ISO`), `--elf`, `-n` (records compared,
+default 200), `--budget` (khbbs dispatches, default 200,000), `--snapshot-at
+NAME:K`, `--alarm` (seconds before khbbs is killed, default 120),
+`--timeout` (seconds for each PPSSPP step, default 120), `--out-dir`
+(default `build/oracle`), `--khbbs` (default `build/pc/hosts/pc/khbbs`).
+
+The budget is low on purpose: the khbbs trace grows by about 660 bytes per
+dispatch. At 200,000 dispatches it is 131 MB (589,623 firmware calls), far
+more than any `-n` needs.
+
+Outputs, all under `--out-dir` (default `build/oracle/`), overwritten by
+every run (removed before it starts): `khbbs.jsonl`, `khbbs.log` (khbbs's
+stdout and stderr: about 20 MB of psprecomp "unimplemented firmware call"
+lines at this budget), `ppsspp.jsonl`, and with `--snapshot-at`
+`khbbs-mem.bin`, `ppsspp-mem.bin` and their `.json` sidecars. Other files
+there are left alone. The PPSSPP home stays at `build/oracle/ppsspp-home`
+whatever `--out-dir` is.
+
+khbbs's exit status (or `killed by signal N`; 14, SIGALRM, means
+`--alarm` ran out) and stop line are printed, not judged: exit 3 (budget
+or first miss) is the normal end. Exit status of `oracle.py`: `trace_diff`'s
+(0 every compared record matches, 1 a divergence, 2 bad input), or 2 when a
+step fails (khbbs wrote no trace or no snapshot sidecar, `capture_hle` or
+`snapshot.py` exited non-zero, `mem_diff` exited 2). A memory difference is
+printed as `oracle: memory differs at EVENT ...` after `mem_diff`'s report
+and does not change the exit status.
+
+It takes about 3 s with `-n 200` and about 4 s with `--snapshot-at
+sceKernelCreateThread:1` (wall time on this Mac, PPSSPP launches included).
+The first result is in [bringup.md](bringup.md), "P2, first oracle
+comparison".
