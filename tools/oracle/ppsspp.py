@@ -131,9 +131,11 @@ class Ppsspp:
 
     def next_event(self, name=None, timeout=None):
         """The next queued or incoming event (of type `name`, if given).
-        `timeout` 0 takes a queued event or at most one waiting message. A timeout raises
-        PpssppError; in the rare case it hits in the middle of a frame the
-        connection is unusable afterwards (close the session)."""
+        `timeout` 0 takes a queued event or reads at most one waiting frame:
+        a ping, or the first fragment of a large reply, then gives a timeout
+        although a message is arriving. A timeout raises PpssppError; in the
+        rare case it hits in the middle of a frame the connection is unusable
+        afterwards (close the session)."""
         return self._wait(lambda m: name is None or m.get("event") == name, timeout,
                           name or "an event")
 
@@ -218,9 +220,10 @@ class Ppsspp:
             self.ws.close()
         except OSError:
             pass
-        if self.proc:
-            proc, self.proc = self.proc, None
-            _stop(proc)
+        finally:                                                  # even on a second Ctrl-C
+            if self.proc:
+                proc, self.proc = self.proc, None
+                _stop(proc)
 
     def __enter__(self):
         return self

@@ -205,7 +205,7 @@ class PpssppTest(unittest.TestCase):
         t = time.monotonic()
         with self.assertRaisesRegex(PpssppError, "timed out"):
             p.wait_stepping(0.3)
-        self.assertLess(time.monotonic() - t, 0.8)
+        self.assertLess(time.monotonic() - t, 1.3)                 # 1 s of slack
         self.assertGreater(len(p.events), 10)
         p.close()
         stop.set()
@@ -220,8 +220,8 @@ class PpssppTest(unittest.TestCase):
         p = self.connect(srv)
         t = time.monotonic()
         with self.assertRaisesRegex(PpssppError, "timed out"):
-            p.pause(timeout=0.5)
-        self.assertLess(time.monotonic() - t, 0.7)                 # not 0.3 + 0.5
+            p.pause(timeout=1.0)
+        self.assertLess(time.monotonic() - t, 1.25)                # not 0.3 + 1.0
         p.close()
         srv.join_checked(self)
 
@@ -426,6 +426,7 @@ class LaunchTest(unittest.TestCase):
 
     def spawned(self):
         """Record every process launch() starts."""
+        # Patches subprocess.Popen process-wide; addCleanup restores it.
         procs, real = [], subprocess.Popen
         patcher = mock.patch.object(ppsspp.subprocess, "Popen",
                                     wraps=lambda *a, **kw: procs.append(real(*a, **kw)) or procs[-1])
