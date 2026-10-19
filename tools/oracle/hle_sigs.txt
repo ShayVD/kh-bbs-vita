@@ -1,0 +1,243 @@
+# Firmware function signatures for tools/oracle/trace_diff.py.
+#
+# Both emulators log all 8 argument registers and $v1 for every call, whatever
+# the function really takes, so the unused slots hold leftover data. This table
+# says which values mean something. One line per function:
+#
+#   NAME  NARGS  RET        NAME's NID is SHA-1 based (import_report.nid_of)
+#   0xNID NARGS  RET        for NIDs that are not SHA-1 of a name
+#
+# NARGS: the number of argument registers used (a0-a3, then t0-t3), or a list
+# of register indices like 0,2,3,4 when one is skipped (a 64-bit argument
+# starts on an even register).
+# RET: i  32-bit result in $v0
+#      u  32-bit kernel-object UID or fd in $v0, which each side allocates
+#         its own way (trace_diff --map-uids learns a mapping from these).
+#         Never addresses: heap placement is what the oracle has to compare.
+#      l  64-bit result in $v0:$v1
+#      v  nothing compared (void, or a float in $f0)
+#      d  like i, for a call that frees the UID or fd in its first argument:
+#         when it returns 0 on both sides, --map-uids drops the pair holding
+#         that value, so a reused UID can be learned again
+#
+# Signatures follow the public PSP homebrew SDK (pspsdk) prototypes. A function
+# missing here is compared on every non-null argument and $v0; add it only
+# when its prototype is certain.
+
+# crt0's sceKernelSetCompiledSdkVersion (SysMemUserForUser, 6.x NID)
+0x35669D4C                          1 i
+
+# SysMemUserForUser
+sceKernelAllocPartitionMemory       5 u
+sceKernelFreePartitionMemory        1 d
+sceKernelGetBlockHeadAddr           1 i
+sceKernelSetCompilerVersion         1 i
+
+# ThreadManForUser: threads
+sceKernelCreateThread               6 u
+sceKernelDeleteThread               1 d
+sceKernelStartThread                3 i
+sceKernelExitThread                 1 i
+# Frees the calling thread, but its argument is the exit status, not a UID.
+sceKernelExitDeleteThread           1 i
+sceKernelTerminateThread            1 i
+sceKernelTerminateDeleteThread      1 d
+sceKernelSleepThread                0 i
+sceKernelWakeupThread               1 i
+sceKernelCancelWakeupThread         1 i
+sceKernelChangeThreadPriority       2 i
+sceKernelGetThreadId                0 u
+sceKernelReferThreadStatus          2 i
+sceKernelWaitThreadEnd              2 i
+sceKernelWaitThreadEndCB            2 i
+sceKernelDelayThread                1 i
+sceKernelDelayThreadCB              1 i
+
+# ThreadManForUser: callbacks
+sceKernelCreateCallback             3 u
+sceKernelDeleteCallback             1 d
+sceKernelCheckCallback              0 i
+
+# ThreadManForUser: semaphores, event flags, message boxes
+sceKernelCreateSema                 5 u
+sceKernelDeleteSema                 1 d
+sceKernelSignalSema                 2 i
+sceKernelWaitSema                   3 i
+sceKernelWaitSemaCB                 3 i
+sceKernelPollSema                   2 i
+sceKernelCreateEventFlag            4 u
+sceKernelDeleteEventFlag            1 d
+sceKernelSetEventFlag               2 i
+sceKernelClearEventFlag             2 i
+sceKernelWaitEventFlag              5 i
+sceKernelWaitEventFlagCB            5 i
+sceKernelReferEventFlagStatus       2 i
+sceKernelCreateMbx                  3 u
+sceKernelDeleteMbx                  1 d
+sceKernelSendMbx                    2 i
+sceKernelPollMbx                    2 i
+
+# ThreadManForUser: mutexes
+sceKernelCreateMutex                4 u
+sceKernelDeleteMutex                1 d
+sceKernelLockMutex                  3 i
+sceKernelLockMutexCB                3 i
+sceKernelTryLockMutex               2 i
+sceKernelUnlockMutex                2 i
+
+# Lightweight mutexes (ThreadManForUser and Kernel_Library). Create returns
+# 0 and fills the caller's work area, so there is no UID to map or drop.
+sceKernelCreateLwMutex              5 i
+sceKernelDeleteLwMutex              1 i
+sceKernelLockLwMutex                3 i
+sceKernelLockLwMutexCB              3 i
+sceKernelTryLockLwMutex_600         2 i
+sceKernelUnlockLwMutex              2 i
+
+# ThreadManForUser: time and alarms
+sceKernelGetSystemTimeWide          0 l
+sceKernelGetSystemTimeLow           0 i
+sceKernelSetAlarm                   3 u
+sceKernelCancelAlarm                1 i
+
+# Kernel_Library
+sceKernelCpuSuspendIntr             0 i
+sceKernelCpuResumeIntr              1 v
+sceKernelMemcpy                     3 i
+sceKernelMemset                     3 i
+
+# LoadExecForUser
+sceKernelExitGame                   0 v
+sceKernelRegisterExitCallback       1 i
+
+# ModuleMgrForUser
+sceKernelGetModuleId                0 u
+sceKernelGetModuleIdByAddress       1 u
+sceKernelStopModule                 5 i
+sceKernelUnloadModule               1 i
+
+# StdioForUser
+sceKernelStdin                      0 u
+sceKernelStdout                     0 u
+sceKernelStderr                     0 u
+
+# UtilsForUser
+sceKernelDcacheWritebackAll         0 v
+sceKernelDcacheWritebackInvalidateAll 0 v
+sceKernelDcacheWritebackInvalidateRange 2 v
+sceKernelIcacheInvalidateRange      2 v
+sceKernelLibcClock                  0 i
+sceKernelLibcGettimeofday           2 i
+sceKernelLibcTime                   1 i
+
+# sceSuspendForUser
+sceKernelPowerLock                  1 i
+sceKernelPowerUnlock                1 i
+sceKernelPowerTick                  1 i
+sceKernelVolatileMemLock            3 i
+sceKernelVolatileMemUnlock          1 i
+
+# InterruptManager
+sceKernelRegisterSubIntrHandler     4 i
+sceKernelReleaseSubIntrHandler      2 i
+sceKernelEnableSubIntr              2 i
+
+# IoFileMgrForUser
+sceIoOpen                           3 u
+sceIoOpenAsync                      3 u
+sceIoClose                          1 d
+sceIoRead                           3 i
+sceIoReadAsync                      3 i
+sceIoWrite                          3 i
+# SceOff sceIoLseek(SceUID fd, SceOff offset, int whence): the 64-bit offset
+# sits in a2:a3, so a1 is padding.
+sceIoLseek                          0,2,3,4 l
+sceIoSync                           2 i
+sceIoRemove                         1 i
+sceIoMkdir                          2 i
+sceIoRmdir                          1 i
+sceIoChdir                          1 i
+sceIoRename                         2 i
+sceIoDopen                          1 u
+sceIoDread                          2 i
+sceIoDclose                         1 d
+sceIoGetstat                        2 i
+sceIoChstat                         3 i
+sceIoDevctl                         6 i
+sceIoIoctl                          6 i
+sceIoWaitAsync                      2 i
+sceIoWaitAsyncCB                    2 i
+sceIoPollAsync                      2 i
+
+# sceUmdUser
+sceUmdCheckMedium                   0 i
+sceUmdActivate                      2 i
+sceUmdGetDriveStat                  0 i
+sceUmdWaitDriveStat                 1 i
+sceUmdWaitDriveStatWithTimer        2 i
+sceUmdWaitDriveStatCB               2 i
+sceUmdCancelWaitDriveStat           0 i
+
+# scePower
+scePowerRegisterCallback            2 i
+scePowerUnregisterCallback          1 i
+scePowerIsPowerOnline               0 i
+scePowerGetBatteryLifePercent       0 i
+scePowerGetPllClockFrequencyInt     0 i
+
+# sceImpose
+sceImposeGetLanguageMode            2 i
+sceImposeSetLanguageMode            2 i
+
+# sceDisplay
+sceDisplaySetMode                   3 i
+sceDisplaySetFrameBuf               4 i
+sceDisplayGetFrameBuf               4 i
+sceDisplayGetVcount                 0 i
+sceDisplayWaitVblankStart           0 i
+# float sceDisplayGetFramePerSec(void): the result is in $f0.
+sceDisplayGetFramePerSec            0 v
+
+# sceRtc
+sceRtcGetCurrentClockLocalTime      1 i
+
+# sceCtrl
+sceCtrlSetSamplingMode              1 i
+sceCtrlGetSamplingMode              1 i
+sceCtrlReadBufferPositive           2 i
+
+# sceGe_user
+sceGeEdramGetSize                   0 i
+sceGeEdramGetAddr                   0 i
+sceGeListEnQueue                    4 u
+sceGeListEnQueueHead                4 u
+sceGeListUpdateStallAddr            2 i
+sceGeListSync                       2 i
+sceGeDrawSync                       1 i
+sceGeBreak                          2 i
+sceGeContinue                       0 i
+sceGeSetCallback                    1 u
+sceGeUnsetCallback                  1 i
+
+# sceAudio
+sceAudioChReserve                   3 i
+sceAudioChRelease                   1 i
+sceAudioOutputBlocking              3 i
+sceAudioOutputPanned                4 i
+sceAudioOutputPannedBlocking        4 i
+sceAudioGetChannelRestLength        1 i
+sceAudioSetChannelDataLen           2 i
+sceAudioChangeChannelConfig         2 i
+sceAudioChangeChannelVolume         3 i
+sceAudioOutput2Reserve              1 i
+sceAudioOutput2Release              0 i
+sceAudioOutput2OutputBlocking       2 i
+sceAudioOutput2GetRestSample        0 i
+
+# sceUtility (the dialog functions are left out: pspsdk declares some void)
+sceUtilityLoadModule                1 i
+sceUtilityUnloadModule              1 i
+sceUtilityGetSystemParamString      3 i
+
+# sceWlanDrv
+sceWlanGetSwitchState               0 i
