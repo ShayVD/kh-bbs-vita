@@ -162,6 +162,8 @@ def main(argv=None):
                 print(f"snapshot: refusing -o {a.out}: it or its sidecar is also {x}", file=sys.stderr)
                 return 2
     try:
+        for f in outputs(a.out):                 # a failed run must not leave an old dump
+            f.unlink(missing_ok=True)
         event, (nid, name, k) = a.at
         try:
             stubs = imports.stubs(imports.load(a.elf))

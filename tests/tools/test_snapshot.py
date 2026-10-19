@@ -171,6 +171,20 @@ class Snapshot(unittest.TestCase):
         self.assertIn("written to", out.getvalue())
         self.assertTrue((self.tmp / "o/mem.bin.json").exists())
 
+    def test_main_removes_stale_outputs_before_failing_early(self):
+        self.out.parent.mkdir()
+        self.out.write_bytes(b"old")
+        (self.tmp / "o/mem.bin.json").write_text("{}")
+        argv = ["--iso", "game.iso", "--elf", str(self.tmp / "module.elf"),
+                "--at", "sceIoOpen:1", "-o", str(self.out)]        # not imported: fails before launch
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), mock.patch.object(snapshot.Ppsspp, "launch") as launch:
+            self.assertEqual(snapshot.main(argv), 1)
+        launch.assert_not_called()
+        self.assertIn("does not import sceIoOpen", err.getvalue())
+        self.assertFalse(self.out.exists())
+        self.assertFalse((self.tmp / "o/mem.bin.json").exists())
+
     def test_main_os_error(self):
         argv = ["--iso", "game.iso", "--elf", str(self.tmp / "module.elf"),
                 "--at", "sceKernelCreateThread:1", "-o", str(self.out)]

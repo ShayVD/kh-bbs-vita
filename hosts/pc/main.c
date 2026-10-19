@@ -50,7 +50,10 @@ static int same_file(const char *a, const char *b) {
 /* The snapshot and its sidecar are deleted when armed: never let either be an input or another output. */
 static int snapshot_clashes(const char *snap, const char *elf, const char *trace, const char *misslog) {
     char side[4096];
-    if (snprintf(side, sizeof side, "%s.json", snap) >= (int)sizeof side) return 1;
+    if (snprintf(side, sizeof side, "%s.json", snap) >= (int)sizeof side) {
+        fprintf(stderr, "khbbs: --snapshot path too long\n");
+        return 1;
+    }
     const char *others[] = { elf, trace, misslog };
     for (int i = 0; i < 3; i++) {
         if (same_file(snap, others[i]) || same_file(side, others[i])) {
