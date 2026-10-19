@@ -179,7 +179,7 @@ class SignatureTable(unittest.TestCase):
         table = sigs.load()
         self.assertGreater(len(table), 100)
         expect = {"sceKernelCreateThread": (6, "u"), "sceKernelStartThread": (3, "i"),
-                  "sceKernelAllocPartitionMemory": (5, "u"), "sceKernelGetBlockHeadAddr": (1, "u"),
+                  "sceKernelAllocPartitionMemory": (5, "u"), "sceKernelGetBlockHeadAddr": (1, "i"),
                   "sceKernelCreateMutex": (4, "u"), "sceKernelCreateLwMutex": (5, "i"),
                   "sceKernelLockLwMutexCB": (3, "i"), "sceKernelUnlockLwMutex": (2, "i"),
                   "sceKernelDelayThreadCB": (1, "i"), "sceIoOpen": (3, "u"), "sceIoGetstat": (2, "i"),

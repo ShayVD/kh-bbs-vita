@@ -11,8 +11,9 @@
 # of register indices like 0,2,3,4 when one is skipped (a 64-bit argument
 # starts on an even register).
 # RET: i  32-bit result in $v0
-#      u  32-bit UID, fd or heap address in $v0, which each side allocates
-#         its own way (trace_diff --map-uids learns a mapping from these)
+#      u  32-bit kernel-object UID or fd in $v0, which each side allocates
+#         its own way (trace_diff --map-uids learns a mapping from these).
+#         Never addresses: heap placement is what the oracle has to compare.
 #      l  64-bit result in $v0:$v1
 #      v  nothing compared (void, or a float in $f0)
 #
@@ -26,7 +27,7 @@
 # SysMemUserForUser
 sceKernelAllocPartitionMemory       5 u
 sceKernelFreePartitionMemory        1 i
-sceKernelGetBlockHeadAddr           1 u
+sceKernelGetBlockHeadAddr           1 i
 sceKernelSetCompilerVersion         1 i
 
 # ThreadManForUser: threads

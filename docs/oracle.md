@@ -332,6 +332,20 @@ return-site breakpoints once it is loaded.
   276 in PPSSPP and `0x00040000` in `khbbs`). Map them (threads by name) or
   ignore them; never compare them raw.
 
+[tools/oracle/trace_diff.py](../tools/oracle/trace_diff.py) does this
+comparison and prints the first record where two traces differ. It reads
+the per-function table
+[tools/oracle/hle_sigs.txt](../tools/oracle/hle_sigs.txt): one line per
+function, `NAME NARGS RET` (or `0xNID NARGS RET` for a NID that is not SHA-1
+of a name). `NARGS` is a count or a list of register indices (`0,2,3,4` for
+`sceIoLseek`, whose 64-bit offset skips `a1`). `RET` is `i` (32 bits in
+`v0`), `l` (64 bits in `v0:v1`), `v` (not compared) or `u` (a kernel-object
+UID or fd). With `--map-uids` it learns pairs from `u` returns only, so heap
+addresses (`sceKernelGetBlockHeadAddr`) are still compared raw: their
+placement is part of what the oracle checks. A function with no line is
+compared on every argument and `v0`, and the report says so. Usage and the
+`-n` window rule are in the script's docstring.
+
 ## Frames
 
 - `gpu.buffer.screenshot` reads the host window's back buffer (window size,
