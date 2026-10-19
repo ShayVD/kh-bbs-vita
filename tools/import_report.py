@@ -87,16 +87,19 @@ def reader_off(secs, addr):
     raise KeyError(hex(addr))
 
 
-def call_counts(d, secs):
-    cnt = collections.Counter()
+def jumps(d, secs):
+    """Yield (pc, op, target) for every j (op 2) and jal (op 3) in executable sections."""
     for s in secs.values():
         if s["type"] == 1 and s["flags"] & 4:
             ws = struct.unpack_from(f"<{s['size'] // 4}I", d, s["off"])
             for i, w in enumerate(ws):
-                if w >> 26 == 3:  # jal
+                if w >> 26 in (2, 3):
                     pc = s["addr"] + 4 * i
-                    cnt[((pc + 4) & 0xF0000000) | ((w & 0x3FFFFFF) << 2)] += 1
-    return cnt
+                    yield pc, w >> 26, ((pc + 4) & 0xF0000000) | ((w & 0x3FFFFFF) << 2)
+
+
+def call_counts(d, secs):
+    return collections.Counter(t for _, op, t in jumps(d, secs) if op == 3)
 
 
 def sdk_names(root):
@@ -134,6 +137,16 @@ def runtime_nids(root):
     return reg
 
 
+def resolve_name(nid, rt, sdk, hashed, pinned):
+    """The name of `nid`, or None: psprecomp's runtime, then pspsdk, then the
+    names file, each only if SHA-1 matches (pspsdk names are trusted as they
+    are), then a pinned name (ends in '?')."""
+    name = rt.get(nid) or sdk.get(nid) or hashed.get(nid)
+    if name and nid_of(name) != nid and nid not in sdk:
+        name = None
+    return name or pinned.get(nid)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("module")
@@ -152,10 +165,7 @@ def main():
 
     rows = []
     for lib, nid, stub in imps:
-        name = rt.get(nid) or sdk.get(nid) or hashed.get(nid)
-        if name and nid_of(name) != nid and nid not in sdk:
-            name = None
-        name = name or pinned.get(nid)
+        name = resolve_name(nid, rt, sdk, hashed, pinned)
         rows.append((lib, nid, stub, name or "?", calls[stub], nid in rt))
 
     bylib = collections.OrderedDict()
