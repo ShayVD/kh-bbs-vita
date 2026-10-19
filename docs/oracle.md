@@ -24,7 +24,7 @@ every run starts with no save data, with port 45045, and with an empty log
 
 ```bash
 H=$PWD/build/oracle/ppsspp-home
-rm -rf "$H/.config/ppsspp" "$H/ppsspp-log.txt"
+rm -rf "${H:?}/.config/ppsspp" "${H:?}/ppsspp-log.txt"
 mkdir -p "$H/.config/ppsspp/PSP/SYSTEM"
 cat > "$H/.config/ppsspp/PSP/SYSTEM/ppsspp.ini" <<'EOF'
 [General]
@@ -136,17 +136,17 @@ at any time without a ticket.
 | `version` | optional `name`, `version` | `name` (`"PPSSPP"`), `version` (`"v1.20.4"`) |
 | `game.status` | | `game` (`{id, version, title}` or `null`), `paused` |
 | `cpu.status` | | `stepping`, `paused`, `pc`, `ticks` |
-| `cpu.stepping` | | none (see below) |
-| `cpu.resume` | | none (see below) |
+| `cpu.stepping` | | no reply (see below) |
+| `cpu.resume` | | no reply (see below) |
 | `cpu.getAllRegs` | optional `thread` | `categories: [{id, name, registerNames, uintValues, floatValues}]` |
 | `cpu.getReg` | `name` | `category`, `register`, `uintValue`, `floatValue` |
 | `cpu.evaluate` | `expression` | `uintValue`, `floatValue` |
-| `cpu.breakpoint.add` | `address`; optional `enabled`, `log`, `condition`, `logFormat` | none |
-| `cpu.breakpoint.remove` | `address` | none |
+| `cpu.breakpoint.add` | `address`; optional `enabled`, `log`, `condition`, `logFormat` | (empty reply) |
+| `cpu.breakpoint.remove` | `address` | (empty reply) |
 | `cpu.breakpoint.list` | | `breakpoints: [{address, enabled, log, condition, logFormat, symbol, code}]` |
 | `memory.read` | `address`, `size`; optional `replacements` | `base64` |
 | `hle.thread.list` | | `threads: [{id, name, status, statuses, pc, entry, initialStackSize, currentStackSize, priority, waitType, isCurrent}]` |
-| `gpu.stats.feed` | optional `enable` (default true) | none; one `gpu.stats.get` event per flip |
+| `gpu.stats.feed` | optional `enable` (default true) | no reply; one `gpu.stats.get` event per flip |
 | `broadcast.config.set` | `disallowed` | `disallowed` |
 | `gpu.buffer.screenshot` | `type` (`"uri"`/`"base64"`) | fails here, see Frames |
 
@@ -171,8 +171,10 @@ at any time without a ticket.
   expression (registers, `[addr]` reads a word); register values print as 8
   hex digits. A breakpoint at the same address is replaced. Nothing is
   validated: address `0x10` and condition `"a0 =="` were accepted silently.
-  Adding 1,967 breakpoints took 0.2 s; 2,000 took 0.07 s in another run.
-- `cpu.breakpoint.remove` also replies when there was no breakpoint.
+  The reply has the ticket and no other keys. 2,000 adds, sent one after
+  another, took 0.07 s.
+- `cpu.breakpoint.remove` gives the same empty reply, also when there was no
+  breakpoint.
 - `memory.read`: see Memory below.
 - `broadcast.config.set` with `{"disallowed":{"logger":true,"input":true}}`
   drops `log` and `input.analog` events. Never set `"stepping": true`: that
@@ -243,8 +245,8 @@ return site, read from PPSSPP's `--log=` file.**
 - The file is flushed after every line: a session can tail it while PPSSPP
   runs (checked: 3 lines after 3 stops, 120 more over 2 s of running).
 - Breakpoint lines: `BKP PC=[0-9a-f]{8}: ([SR]) (.+)$`. Split the rest on
-  single spaces. `S`: `pc uid ra a0 a1 a2 a3 t0 t1 t2 t3`. `R`: `pc uid v0
-  v1`.
+  single spaces. `S`: `pc uid ra a0 a1 a2 a3 t0 t1 t2 t3`.
+  `R`: `pc uid v0 v1`.
 - Thread creation: `^.*\b(\d+)=sceKernelCreateThread\((.*?), ` gives the
   decimal uid and the name. It sits between that call's `S` and `R`, and the
   `R`'s `v0` equals the uid.
@@ -331,7 +333,8 @@ return-site breakpoints once it is loaded.
   `sceDisplaySetFrameBuf(topaddr, bufferwidth, pixelformat, sync)` names it.
   KH BBS alternates `0x04000000`/`0x04044000`, width 512, format 1, so one
   frame is `512 * 272 * 2` bytes; crop to 480x272.
-- Pixel formats (little endian):
+- Pixel formats (little endian), per the PSP GE pixel-format
+  documentation; format 1 checked against the frame-300 capture:
   - 0: 565, 16 bits: R bits 0-4, G 5-10, B 11-15.
   - 1: 5551, 16 bits (A1B5G5R5): R bits 0-4, G 5-9, B 10-14, A bit 15.
   - 2: 4444, 16 bits: R in the low nibble, then G, B, A.
@@ -342,9 +345,9 @@ return-site breakpoints once it is loaded.
   itself. Put a stopping breakpoint on its stub (`0x08B307B8`) and resume
   N-1 times; at the Nth stop `a0` names the finished frame. Frame 300 was
   reached in 6.5 s. The game calls it about once per flip (1,184 calls
-  against 1,196 `gpu.stats.get` feed events in 20 s; the feed has no frame
-  index). `sceDisplayWaitVblankStart` is called once, so it is no frame
-  counter.
+  against 1,196 `gpu.stats.get` feed events in 20 s; the 12 extra flips
+  are unexplained, and the feed has no frame index).
+  `sceDisplayWaitVblankStart` is called once, so it is no frame counter.
 - The trace also has a breakpoint on that stub, and adding a breakpoint
   replaces the one at the same address. So during frame capture it is
   `enabled: true, log: true` with the trace's `logFormat`: checked, it both
