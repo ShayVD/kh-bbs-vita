@@ -84,6 +84,16 @@ class ParseTest(unittest.TestCase):
                             S(0x08B30010, WORKER, 0x08A90104), R(0x08A90104, WORKER, 0)])
         self.assertEqual(recs[0]["thread"], "Sd, Update(1)")
 
+    def test_repeated_thread_names_get_a_number(self):
+        recs, _, _ = parse([create_info(290, "worker"), create_info(291, "root"),
+                            create_info(292, "worker"), create_info(293, "worker"),
+                            S(0x08B30010, 290, 0x08A90104), R(0x08A90104, 290, 0),
+                            S(0x08B30010, 291, 0x08A90104), R(0x08A90104, 291, 0),
+                            S(0x08B30010, 292, 0x08A90104), R(0x08A90104, 292, 0),
+                            S(0x08B30010, 293, 0x08A90104), R(0x08A90104, 293, 0),
+                            S(0x08B30010, ROOT, 0x08A90104), R(0x08A90104, ROOT, 0)])
+        self.assertEqual([r["thread"] for r in recs], ["worker", "root#2", "worker#2", "worker#3", "root"])
+
     def test_callback_calls_come_before_their_wait(self):
         lines = [
             S(0x08B30030, ROOT, 0x08A90240, 7),                 # ...CB wait

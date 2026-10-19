@@ -295,6 +295,11 @@ Sample lines (every value made up):
 - Some `S` lines never get an `R`: calls that do not return
   (`sceKernelExitThread`, `sceKernelExitDeleteThread`) and threads still
   asleep when the capture stops.
+- Records carry the thread's name, not its uid. Names need not be unique,
+  so the k-th thread (k >= 2) created with a name already taken is called
+  `NAME#k`, counting in creation order (the threads of `hle.thread.list` at
+  the entry stop first). `khbbs` must name its threads by the same rule once
+  it has threads (P4), or per-thread comparison pairs the wrong streams.
 
 ### Why not the alternatives
 
@@ -339,8 +344,11 @@ the per-function table
 function, `NAME NARGS RET` (or `0xNID NARGS RET` for a NID that is not SHA-1
 of a name). `NARGS` is a count or a list of register indices (`0,2,3,4` for
 `sceIoLseek`, whose 64-bit offset skips `a1`). `RET` is `i` (32 bits in
-`v0`), `l` (64 bits in `v0:v1`), `v` (not compared) or `u` (a kernel-object
-UID or fd). With `--map-uids` it learns pairs from `u` returns only, so heap
+`v0`), `l` (64 bits in `v0:v1`), `v` (not compared), `u` (a kernel-object
+UID or fd) or `d` (like `i`, for a call that frees the UID or fd in its first
+argument: `Delete*`, `sceIoClose`, ...). With `--map-uids` it learns pairs
+from `u` returns only, and a `d` call that returns 0 on both sides drops the
+pair holding its argument, so a reused UID or fd can be learned again. Heap
 addresses (`sceKernelGetBlockHeadAddr`) are still compared raw: their
 placement is part of what the oracle checks. A function with no line is
 compared on every argument and `v0`, and the report says so. Usage and the

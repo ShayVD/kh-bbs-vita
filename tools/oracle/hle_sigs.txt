@@ -16,6 +16,9 @@
 #         Never addresses: heap placement is what the oracle has to compare.
 #      l  64-bit result in $v0:$v1
 #      v  nothing compared (void, or a float in $f0)
+#      d  like i, for a call that frees the UID or fd in its first argument:
+#         when it returns 0 on both sides, --map-uids drops the pair holding
+#         that value, so a reused UID can be learned again
 #
 # Signatures follow the public PSP homebrew SDK (pspsdk) prototypes. A function
 # missing here is compared on every non-null argument and $v0; add it only
@@ -26,18 +29,19 @@
 
 # SysMemUserForUser
 sceKernelAllocPartitionMemory       5 u
-sceKernelFreePartitionMemory        1 i
+sceKernelFreePartitionMemory        1 d
 sceKernelGetBlockHeadAddr           1 i
 sceKernelSetCompilerVersion         1 i
 
 # ThreadManForUser: threads
 sceKernelCreateThread               6 u
-sceKernelDeleteThread               1 i
+sceKernelDeleteThread               1 d
 sceKernelStartThread                3 i
 sceKernelExitThread                 1 i
+# Frees the calling thread, but its argument is the exit status, not a UID.
 sceKernelExitDeleteThread           1 i
 sceKernelTerminateThread            1 i
-sceKernelTerminateDeleteThread      1 i
+sceKernelTerminateDeleteThread      1 d
 sceKernelSleepThread                0 i
 sceKernelWakeupThread               1 i
 sceKernelCancelWakeupThread         1 i
@@ -51,38 +55,38 @@ sceKernelDelayThreadCB              1 i
 
 # ThreadManForUser: callbacks
 sceKernelCreateCallback             3 u
-sceKernelDeleteCallback             1 i
+sceKernelDeleteCallback             1 d
 sceKernelCheckCallback              0 i
 
 # ThreadManForUser: semaphores, event flags, message boxes
 sceKernelCreateSema                 5 u
-sceKernelDeleteSema                 1 i
+sceKernelDeleteSema                 1 d
 sceKernelSignalSema                 2 i
 sceKernelWaitSema                   3 i
 sceKernelWaitSemaCB                 3 i
 sceKernelPollSema                   2 i
 sceKernelCreateEventFlag            4 u
-sceKernelDeleteEventFlag            1 i
+sceKernelDeleteEventFlag            1 d
 sceKernelSetEventFlag               2 i
 sceKernelClearEventFlag             2 i
 sceKernelWaitEventFlag              5 i
 sceKernelWaitEventFlagCB            5 i
 sceKernelReferEventFlagStatus       2 i
 sceKernelCreateMbx                  3 u
-sceKernelDeleteMbx                  1 i
+sceKernelDeleteMbx                  1 d
 sceKernelSendMbx                    2 i
 sceKernelPollMbx                    2 i
 
 # ThreadManForUser: mutexes
 sceKernelCreateMutex                4 u
-sceKernelDeleteMutex                1 i
+sceKernelDeleteMutex                1 d
 sceKernelLockMutex                  3 i
 sceKernelLockMutexCB                3 i
 sceKernelTryLockMutex               2 i
 sceKernelUnlockMutex                2 i
 
 # Lightweight mutexes (ThreadManForUser and Kernel_Library). Create returns
-# 0 and fills the caller's work area.
+# 0 and fills the caller's work area, so there is no UID to map or drop.
 sceKernelCreateLwMutex              5 i
 sceKernelDeleteLwMutex              1 i
 sceKernelLockLwMutex                3 i
@@ -141,7 +145,7 @@ sceKernelEnableSubIntr              2 i
 # IoFileMgrForUser
 sceIoOpen                           3 u
 sceIoOpenAsync                      3 u
-sceIoClose                          1 i
+sceIoClose                          1 d
 sceIoRead                           3 i
 sceIoReadAsync                      3 i
 sceIoWrite                          3 i
@@ -156,7 +160,7 @@ sceIoChdir                          1 i
 sceIoRename                         2 i
 sceIoDopen                          1 u
 sceIoDread                          2 i
-sceIoDclose                         1 i
+sceIoDclose                         1 d
 sceIoGetstat                        2 i
 sceIoChstat                         3 i
 sceIoDevctl                         6 i

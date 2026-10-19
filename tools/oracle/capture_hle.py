@@ -43,13 +43,23 @@ def hex32(v):
 def parse(lines, stubs, thread_names, stats=None):
     """Yield trace records from PPSSPP log lines. `stubs` is
     {stub_addr: (nid, name)}, `thread_names` {uid: name} (from
-    hle.thread.list); sceKernelCreateThread info lines add to it. Other lines
+    hle.thread.list); sceKernelCreateThread info lines add to it. The k-th
+    thread (k >= 2, in that order) whose name is already taken is named
+    "NAME#k", so thread names are unique stream keys. Other lines
     are skipped. Breakpoint lines that do not parse, `S` lines off a stub and
     `R` lines that close no open call are skipped and counted in `stats` (a
     Counter, keys PROBLEMS); the first REPORT_FIRST go to stderr.
     stats["open"] is the number of calls still open at the end."""
     stats = collections.Counter() if stats is None else stats
-    names = dict(thread_names)
+    names, used = {}, collections.Counter()
+
+    def name_thread(uid, name):
+        # The k-th thread (k >= 2) with a name already used is "name#k".
+        used[name] += 1
+        names[uid] = name if used[name] == 1 else f"{name}#{used[name]}"
+
+    for uid, name in thread_names.items():
+        name_thread(uid, name)
     open_calls = {}                  # uid -> stack of open calls
     order = 0                        # S order, for the calls left open
     seq = 0
@@ -76,7 +86,7 @@ def parse(lines, stubs, thread_names, stats=None):
             if LOOKS_BKP.search(line):
                 problem("malformed", f"malformed breakpoint line {line!r}")
             elif c := CREATE.search(line):
-                names[int(c.group(1))] = c.group(2)
+                name_thread(int(c.group(1)), c.group(2))
             continue
         if m.group(1):
             pc, uid, ra, *args = (int(x, 16) for x in m.group(1).split())
