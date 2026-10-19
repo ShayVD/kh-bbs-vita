@@ -10,14 +10,15 @@ typedef enum {
     KHBBS_DISPATCH_MISS,
     KHBBS_BUDGET,
     KHBBS_BAD_ARGS,     /* nothing was run: `path` too long for the boot area */
-    KHBBS_GUEST_BREAK   /* the game executed `break`, usually a failed assert */
+    KHBBS_GUEST_BREAK   /* the guest executed `break`: see `code` */
 } khbbs_stop;
 
 typedef struct {
     khbbs_stop why;
     uint32_t   addr;       /* the missed target (KHBBS_DISPATCH_MISS) or the break's address (KHBBS_GUEST_BREAK) */
     uint64_t   calls;      /* dispatches made, including the entry dispatch */
-    uint32_t   code;       /* the break code, for KHBBS_GUEST_BREAK */
+    uint32_t   code;       /* the break code, for KHBBS_GUEST_BREAK: 7 is the compiler's
+                              integer divide-by-zero trap, 6 overflow, 0 an assert */
     uint32_t   misses;     /* distinct miss targets, including any stepped over */
 } khbbs_result;
 

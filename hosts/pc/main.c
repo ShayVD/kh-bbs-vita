@@ -24,9 +24,18 @@ static int usage(void) {
             "exit status: 0 the entry point returned; 3 the run stopped at its first\n"
             "dispatch miss or on budget; 4 it carried on past a miss (--keep-going) and then\n"
             "returned, ran out of budget, hit a guest break or stopped at a later miss, so\n"
-            "only its first miss is trustworthy; 5 the game executed `break` (a failed\n"
-            "assert) and no miss was stepped over before it; 2 bad usage; 1 other failure\n");
+            "only its first miss is trustworthy; 5 the guest executed `break` (integer\n"
+            "divide by zero, overflow or an assert) and no miss was stepped over before it;\n"
+            "2 bad usage; 1 other failure\n");
     return 2;
+}
+
+static const char *break_kind(uint32_t code) {
+    switch (code) {
+    case 7: return " (integer divide by zero)";
+    case 6: return " (overflow)";
+    default: return "";
+    }
 }
 
 int main(int argc, char **argv) {
@@ -63,7 +72,7 @@ int main(int argc, char **argv) {
                                 &(khbbs_boot_opts){ .budget = budget, .keep_going = (uint32_t)keep });
     printf("khbbs: stopped: %s", khbbs_stop_name(r.why));
     if (r.why == KHBBS_DISPATCH_MISS) printf(" at 0x%08X", r.addr);
-    if (r.why == KHBBS_GUEST_BREAK) printf(" at 0x%08X (code 0x%05X)", r.addr, r.code);
+    if (r.why == KHBBS_GUEST_BREAK) printf(" at 0x%08X (code 0x%05X)%s", r.addr, r.code, break_kind(r.code));
     printf("  (%llu dispatches", (unsigned long long)r.calls);
     if (trace) printf(", %llu traced firmware calls", (unsigned long long)khbbs_trace_count());
     if (r.misses) printf(", %" PRIu32 " distinct misses", r.misses);

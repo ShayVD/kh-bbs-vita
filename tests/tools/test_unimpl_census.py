@@ -23,7 +23,9 @@ L_08804000: PSP_MARK(0x08804000u);
     }
 L_08804020:
     /* 08804020  break     0x7 */
-    psp_unimplemented(0x08804020u, "break");
+    psp_break(0x08804020u, 0x00007u);
+    psp_break(0x08804024u, 0x00000u);
+    psp_break(0x08804028u, 0x00007u);
     /* 08804030  jal       0x08900000 */
     /* 08804034  addiu     $a0, $zero, 1 */
     r_a0 = 1;
@@ -66,12 +68,24 @@ class Census(unittest.TestCase):
         out = r.stdout.splitlines()
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertEqual(out[0], "files 1")
-        for line in ("unimplemented 4", "  mtv 1", "  mfv 1", "  break 1",
+        for line in ("unimplemented 3", "  mtv 1", "  mfv 1",
                      "  vfpu? 0xD0468202 1",
                      "unhandled branches 2", "  bvf 1", "  bvtl 1",
-                     "undiscovered static targets 3", "  call 1", "  fallthrough 1", "  branch 1"):
+                     "undiscovered static targets 3", "  call 1", "  fallthrough 1", "  branch 1",
+                     "guest break sites 3", "  code 0x00007 2", "  code 0x00000 1"):
             self.assertIn(line, out)
         self.assertNotIn("unlisted import", r.stdout)   # only main_funcs_*.c count
+
+    def test_guest_breaks_are_reported_not_gated(self):
+        rc, out, r = self.lines("    /* 08804000  break     0x7 */\n"
+                                "    psp_break(0x08804000u, 0x00007u);\n")
+        self.assertEqual(rc, 0, r.stdout)
+        self.assertIn("guest break sites 1", out)
+        self.assertIn("  code 0x00007 1", out)
+        self.assertIn("unimplemented 0", out)
+        rc, out, _ = self.lines("    /* 08804000  break     0x7 */\n"
+                                "    psp_break(0x08804000u, 0x00007u);\n", "--sites")
+        self.assertIn("0x08804000 break code 0x00007", out)
 
     def test_sites_lists_addresses(self):
         rc, out, _ = self.lines(SAMPLE, "--sites")

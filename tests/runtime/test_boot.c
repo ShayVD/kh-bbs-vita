@@ -50,6 +50,29 @@ static int read_log(const char *path, char out[4][400]) {
     return n;
 }
 static void asserts(void) { psp_break(0x08804700u, 7); }
+static void miss_then_break(void) {
+    psp_dispatch(0x0BAD0000u);
+    psp_break(0x08804800u, 6);
+}
+/* In a forked child, psp_break must abort: no boot is running, so there is no
+ * jmp_buf to jump to. Checked right after each kind of stop, so a stop path
+ * that forgot to end the run is caught where it happens. */
+static void aborts_outside_boot(const char *after) {
+    char msg[96];
+    snprintf(msg, sizeof msg, "psp_break aborts after a boot that %s", after);
+    fflush(NULL);
+    pid_t pid = fork();
+    if (pid == 0) {
+        struct rlimit nocore = {0, 0};
+        setrlimit(RLIMIT_CORE, &nocore);   /* abort() must not leave a core file */
+        if (!freopen("/dev/null", "w", stderr)) _exit(2);
+        psp_break(0x08804700u, 7);
+        _exit(0);                          /* reached only if psp_break returned */
+    }
+    int st = 0;
+    waitpid(pid, &st, 0);
+    CHECK(WIFSIGNALED(st) && WTERMSIG(st) == SIGABRT, msg);
+}
 static void spin(void) { psp_dispatch(0x08804300u); }
 
 int main(void) {
@@ -61,6 +84,7 @@ int main(void) {
     psp_register(0x08804500u, five_then_other);
     psp_register(0x08804600u, many_wild);
     psp_register(0x08804700u, asserts);
+    psp_register(0x08804800u, miss_then_break);
 
     const char *path = "ms0:/PSP/GAME/KH/EBOOT.BIN";
     khbbs_image img = {0};
@@ -71,14 +95,17 @@ int main(void) {
     CHECK(seen_a1 == 0x08000100u, "a1 = argp");
     const char *g = psp_mem_ptr(0x08000100u, (uint32_t)strlen(path) + 1);
     CHECK(g && strcmp(g, path) == 0, "path in guest memory");
+    aborts_outside_boot("returned");
 
     img.entry = 0x08804200u;
     r = khbbs_boot(&img, path, &(khbbs_boot_opts){ .budget = 0 });
     CHECK(r.why == KHBBS_DISPATCH_MISS && r.addr == 0x0BAD0000u, "dispatch miss");
+    aborts_outside_boot("stopped at a miss");
 
     img.entry = 0x08804300u;   /* spin re-dispatches itself forever */
     r = khbbs_boot(&img, path, &(khbbs_boot_opts){ .budget = 50 });
     CHECK(r.why == KHBBS_BUDGET, "budget");
+    aborts_outside_boot("ran out of budget");
 
     img.entry = 0x08804100u;   /* a previous budget must not leak into this run */
     r = khbbs_boot(&img, path, &(khbbs_boot_opts){ .budget = 0 });
@@ -132,7 +159,12 @@ int main(void) {
     img.entry = 0x08804700u;
     r = khbbs_boot(&img, path, NULL);
     CHECK(r.why == KHBBS_GUEST_BREAK && r.addr == 0x08804700u && r.code == 7, "guest break stops the run");
-    CHECK(strcmp(khbbs_stop_name(r.why), "guest break (game assertion)") == 0, "guest break has a name");
+    CHECK(strcmp(khbbs_stop_name(r.why), "guest break") == 0, "guest break has a name");
+    aborts_outside_boot("ended in a guest break");
+    img.entry = 0x08804800u;   /* a stepped-over miss, then a break */
+    r = khbbs_boot(&img, path, &(khbbs_boot_opts){ .keep_going = 1 });
+    CHECK(r.why == KHBBS_GUEST_BREAK && r.addr == 0x08804800u && r.code == 6 && r.misses == 1,
+          "a break after a stepped-over miss keeps the miss count");
     img.entry = 0x08804100u;
     r = khbbs_boot(&img, path, NULL);
     CHECK(r.why == KHBBS_RETURNED && r.code == 0, "a run after a break is clean");
@@ -162,21 +194,6 @@ int main(void) {
     int st = 0;
     waitpid(pid, &st, 0);
     CHECK(WIFSIGNALED(st) && WTERMSIG(st) == SIGABRT, "default miss handler restored after boot");
-
-    /* After a boot has ended (break or not) g_running must be clear, so a
-     * psp_break now aborts instead of longjmp-ing into a dead jmp_buf. */
-    fflush(NULL);
-    pid = fork();
-    if (pid == 0) {
-        struct rlimit nocore = {0, 0};
-        setrlimit(RLIMIT_CORE, &nocore);
-        if (!freopen("/dev/null", "w", stderr)) _exit(2);
-        psp_break(0x08804700u, 7);
-        _exit(0);
-    }
-    st = 0;
-    waitpid(pid, &st, 0);
-    CHECK(WIFSIGNALED(st) && WTERMSIG(st) == SIGABRT, "psp_break after boot aborts");
 
     printf("%s\n", failures ? "test_boot: FAILED" : "test_boot: ok");
     return failures ? 1 : 0;

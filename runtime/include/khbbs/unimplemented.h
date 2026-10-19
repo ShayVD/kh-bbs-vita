@@ -10,10 +10,12 @@
  * trace, then abort()s. Never returns. */
 void psp_unimplemented(uint32_t addr, const char *what);
 
-/* The guest executed `break` (an assert in the game). During khbbs_boot this
- * stops the run with KHBBS_GUEST_BREAK; outside it, it aborts like
- * psp_unimplemented. Defined in boot.c, which owns the stop. */
-void psp_break(uint32_t addr, uint32_t code);
+/* The guest executed `break`: the compiler's integer divide-by-zero (code 7)
+ * or overflow (6) check, or an assert (0). In a recompiled run a divide by zero
+ * more likely means a wrong register value than a bug in the game. During
+ * khbbs_boot this stops the run with KHBBS_GUEST_BREAK; outside it, it aborts
+ * like psp_unimplemented. Never returns. Defined in boot.c, which owns the stop. */
+_Noreturn void psp_break(uint32_t addr, uint32_t code);
 
 /* Make every VFPU trap fatal (through psp_unimplemented). Every host must
  * call it once at start-up (hosts/pc does; hosts/vita must too), or a trap

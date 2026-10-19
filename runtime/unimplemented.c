@@ -1,6 +1,6 @@
-/* Mostly VFPU ops, and the game's own `break` traps. Carrying on would run
- * with wrong state, so stop at the guest address; abort() leaves a backtrace
- * for the debugger. */
+/* Instructions the recompiler could not translate, and VFPU traps. Carrying
+ * on would run with wrong state, so stop at the guest address; abort() leaves
+ * a backtrace for the debugger. (The guest's own `break` is psp_break, in boot.c.) */
 #include "khbbs/unimplemented.h"
 #include "khbbs/trace.h"
 #include "psprecomp/dispatch.h"

@@ -11,6 +11,8 @@ Gated, so a non-zero count fails the run:
 Reported, not gated:
   - static targets discovery never reached: a call, a branch, or a fall into
     a body owned by another function (all go through psp_dispatch)
+  - guest `break` sites (psp_break), by code: the game's own traps. Code 7 is the
+    compiler's integer divide-by-zero check, 6 overflow, 0 a plain assert
 Every occurrence is counted; one the patterns cannot parse shows as <unparsed>
 rather than vanishing, so a change in the emitter's output cannot hide a site.
 """
@@ -20,6 +22,7 @@ import argparse, collections, pathlib, re, sys
 COMMENT = re.compile(r"/\* ([0-9A-F]{8})  (\S+)\s*(.*?)\s*\*/")
 UNIMPL_MARK = "psp_unimplemented("
 UNIMPL = re.compile(r'psp_unimplemented\(0x([0-9A-Fa-f]{1,8})u, "([^"]*)"\)')
+BREAK = re.compile(r"psp_break\(0x([0-9A-Fa-f]{1,8})u, 0x([0-9A-Fa-f]{1,5})u\)")
 UNHANDLED_MARK = "unhandled branch"
 # psp_dispatch to a static target: tagged (a call, or a fall into another body),
 # or untagged inside a non-likely branch: `if (_c) { psp_dispatch(0x...u); return; }`.
@@ -27,7 +30,8 @@ UNDISCOVERED = re.compile(r"psp_dispatch\(0x([0-9A-Fa-f]{1,8})u\);  /\* not disc
 UNDISCOVERED_BRANCH = re.compile(r"if \(_c\) \{ psp_dispatch\(0x([0-9A-Fa-f]{1,8})u\);")
 FALLS_INTO = re.compile(r"/\* falls into 0x[0-9A-Fa-f]+, owned by another function \*/")
 KINDS = (("unimplemented", "unimplemented"), ("branch", "unhandled branches"),
-         ("undiscovered", "undiscovered static targets"))
+         ("undiscovered", "undiscovered static targets"),
+         ("break", "guest break sites"))
 UNKNOWN = "????????"
 
 
@@ -60,6 +64,8 @@ def scan(paths, bare=None):
                 yield "unimplemented", addr, what
             for _ in range(line.count(UNIMPL_MARK) - parsed):
                 yield "unimplemented", last[0], "<unparsed>"
+            for u in BREAK.finditer(line):
+                yield "break", u.group(1).upper().zfill(8), f"code 0x{int(u.group(2), 16):05X}"
             for _ in range(line.count(UNHANDLED_MARK)):
                 yield "branch", last[0], last[1]
             d = UNDISCOVERED.search(line)

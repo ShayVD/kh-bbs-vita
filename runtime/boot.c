@@ -64,6 +64,9 @@ static void on_miss(uint32_t addr) {
     longjmp(g_stop, 1);
 }
 
+/* The guest's own trap. Most game breaks are the compiler's integer
+ * divide-by-zero check (code 7), which in a recompiled run more likely means
+ * a wrong register value, i.e. a translation bug, than a bug in the game. */
 void psp_break(uint32_t addr, uint32_t code) {
     fflush(stdout);
     fprintf(stderr, "khbbs: guest break at 0x%08X (code 0x%05X)\n", addr, code);
@@ -139,7 +142,7 @@ const char *khbbs_stop_name(khbbs_stop s) {
     case KHBBS_DISPATCH_MISS: return "dispatch miss";
     case KHBBS_BUDGET:        return "dispatch budget exhausted";
     case KHBBS_BAD_ARGS:      return "bad boot arguments";
-    case KHBBS_GUEST_BREAK:   return "guest break (game assertion)";
+    case KHBBS_GUEST_BREAK:   return "guest break";
     }
     return "?";
 }
