@@ -309,10 +309,39 @@ def isolated_env(home):
     return {"HOME": home, "CFFIXED_USER_HOME": home}
 
 
+def _proc_listening(port):
+    """On Linux, whether any TCP socket is in LISTEN on `port`, read from
+    /proc/net/tcp and tcp6; None where those files do not exist (macOS)."""
+    found = None
+    for name in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            lines = pathlib.Path(name).read_text().splitlines()[1:]
+        except OSError:
+            continue
+        found = found or False
+        for line in lines:
+            fields = line.split()
+            # local_address is HEXIP:HEXPORT; state 0A is TCP_LISTEN.
+            if len(fields) > 3 and fields[3] == "0A" and int(fields[1].rsplit(":", 1)[1], 16) == port:
+                return True
+    return found
+
+
 def port_free(port):
-    """True if nothing listens on `port`. The binds (SO_REUSEADDR, so a
-    TIME_WAIT left by an earlier run does not count) catch wildcard
-    listeners; the connects catch listeners on 127.0.0.1 or ::1 only."""
+    """True if nothing listens on `port`. A TIME_WAIT left by an earlier run
+    does not count. The connects catch listeners on 127.0.0.1 or ::1.
+    Elsewhere, on Linux /proc/net/tcp{,6} says whether anything listens:
+    there SO_REUSEADDR does not let a bind pass a TIME_WAIT left by a socket
+    that did not set it, so a bind would wrongly call the port busy. On macOS
+    the binds (SO_REUSEADDR) catch wildcard listeners and pass a TIME_WAIT."""
+    for family, addr in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+        with socket.socket(family) as s:
+            s.settimeout(1.0)
+            if s.connect_ex((addr, port)) == 0:
+                return False
+    listening = _proc_listening(port)
+    if listening is not None:
+        return not listening
     for family, addr in ((socket.AF_INET, "0.0.0.0"), (socket.AF_INET6, "::")):
         with socket.socket(family) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -321,11 +350,6 @@ def port_free(port):
             try:
                 s.bind((addr, port))
             except OSError:
-                return False
-    for family, addr in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
-        with socket.socket(family) as s:
-            s.settimeout(1.0)
-            if s.connect_ex((addr, port)) == 0:
                 return False
     return True
 

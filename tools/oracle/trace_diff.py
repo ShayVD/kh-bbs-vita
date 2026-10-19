@@ -27,13 +27,14 @@ Usage:
       [--ignore-arg NAME_OR_NID:INDEX|ret|ret_hi ...] [--compare-ra]
       [--sigs hle_sigs.txt]
 """
-import argparse, collections, json, pathlib, sys
+import argparse, collections, json, pathlib, re, sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from oracle import sigs as hle_sigs  # noqa: E402
 
 CONTEXT = 3
 ERROR = 0x80000000
+HEX = re.compile(r"0x[0-9A-Fa-f]{8}")          # how runtime/trace.c and capture_hle write values
 
 # Where the walk stopped: the stream key, the index in the stream, the A and B
 # indexes into the traces (None for a missing record) and the field names.
@@ -59,13 +60,14 @@ def check(r):
     if not isinstance(r.get("thread"), (str, type(None))):
         raise ValueError("thread is neither a string nor null")
     for v in (r["nid"], r.get("ret"), r.get("ret_hi"), r.get("ra"), *r["args"]):
-        if v is not None and not isinstance(v, str):
-            raise ValueError(f"{v!r} is not a hex string")
-        val(v)
+        if v is not None and not (isinstance(v, str) and HEX.fullmatch(v)):
+            raise ValueError(f"{v!r} is not null or a 0x-prefixed 8-digit hex string")
 
 
 def load(path, n=None):
-    """The first `n` records of the trace at `path` (all if `n` is None)."""
+    """The first `n` records of the trace at `path` (all if `n` is None). A
+    last line that has no newline and does not parse (a trace cut off while
+    it was written) is dropped with a warning."""
     recs = []
     try:
         with open(path, encoding="utf-8") as f:
@@ -78,10 +80,14 @@ def load(path, n=None):
                     r = json.loads(line)
                     check(r)
                 except ValueError as e:
+                    if not line.endswith("\n"):
+                        print(f"trace_diff: warning: {path}:{lineno}: dropped the unfinished last line ({e})",
+                              file=sys.stderr)
+                        break
                     raise BadInput(f"{path}:{lineno}: {e}") from None
                 recs.append(r)
-    except OSError as e:
-        raise BadInput(f"cannot read {path}: {e.strerror}") from None
+    except (OSError, UnicodeDecodeError) as e:
+        raise BadInput(f"cannot read {path}: {e}") from None
     return recs
 
 
@@ -120,6 +126,9 @@ class Differ:
 
     def forget(self, x, y):
         """Drop the pairs holding A value `x` or B value `y` (a freed UID)."""
+        # Normally both are one pair. If they are two, `y` does not map to `x`,
+        # so args[0] already differed and this record is the divergence:
+        # dropping both cannot hide anything.
         if y in self.uids:
             del self.mapped_from[self.uids.pop(y)]
         if x in self.mapped_from:
@@ -200,7 +209,10 @@ def brief(r, sigs):
     """One line for a context record: the signature's arguments (every slot
     up to the last one it uses; `_` for a skipped one), or all of them."""
     sig = sigs.get(val(r["nid"]))
-    slots = range(max(sig.args) + 1 if sig and sig.args else 0 if sig else len(r["args"]))
+    if sig:
+        slots = range(max(sig.args) + 1) if sig.args else range(0)
+    else:
+        slots = range(len(r["args"]))
     args = ["_" if sig and i not in sig.args else
             "null" if i >= len(r["args"]) or r["args"][i] is None else r["args"][i] for i in slots]
     ret = "" if sig and sig.ret == "v" else f" = {r.get('ret') or 'null'}"

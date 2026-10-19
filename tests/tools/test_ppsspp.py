@@ -385,6 +385,25 @@ class PortTest(unittest.TestCase):
     def test_free_port(self):
         self.assertTrue(port_free(free_port()))
 
+    def test_proc_listening_parses_linux_tables(self):
+        """Linux's /proc/net/tcp: only state 0A (LISTEN) on the port counts."""
+        tcp = ("  sl  local_address rem_address   st tx_queue rx_queue\n"
+               "   0: 0100007F:AFF5 00000000:0000 0A 00000000:00000000\n"    # 127.0.0.1:45045 LISTEN
+               "   1: 0100007F:1F90 0100007F:D431 06 00000000:00000000\n")   # :8080 TIME_WAIT
+        tcp6 = "  sl  local_address remote_address st\n"
+        files = {"/proc/net/tcp": tcp, "/proc/net/tcp6": tcp6}
+
+        def read_text(path):
+            if str(path) not in files:
+                raise FileNotFoundError(path)
+            return files[str(path)]
+        with mock.patch.object(pathlib.Path, "read_text", lambda self: read_text(self)):
+            self.assertTrue(ppsspp._proc_listening(45045))
+            self.assertFalse(ppsspp._proc_listening(8080))     # TIME_WAIT is not LISTEN
+            self.assertFalse(ppsspp._proc_listening(1234))
+            files.clear()
+            self.assertIsNone(ppsspp._proc_listening(45045))   # no /proc (macOS)
+
     def test_time_wait_does_not_count(self):
         """PPSSPP closing first leaves a TIME_WAIT on its own port."""
         with socket.socket() as srv:

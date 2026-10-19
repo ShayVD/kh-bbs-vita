@@ -21,9 +21,9 @@ S_FORMAT = "S {pc} {[k0+0xc0]} {ra} {a0} {a1} {a2} {a3} {t0} {t1} {t2} {t3}"
 R_FORMAT = "R {pc} {[k0+0xc0]} {v0} {v1}"
 BKP = re.compile(r"BKP PC=[0-9a-f]{8}: (?:S((?: [0-9a-f]{8}){11})|R((?: [0-9a-f]{8}){4}))\s*$")
 LOOKS_BKP = re.compile(r"BKP PC=.*: [SR] ")
-# The uid (decimal) and the name; the five arguments after the name anchor
-# it, so a name may contain ", ".
-CREATE = re.compile(r"\b(\d+)=sceKernelCreateThread\((.*), [0-9a-f]{8}, [0-9a-f]{8}, \d+, "
+# The uid (decimal, or a hex error code when the call failed) and the name;
+# the five arguments after the name anchor it, so a name may contain ", ".
+CREATE = re.compile(r"\b([0-9a-fA-F]+)=sceKernelCreateThread\((.*), [0-9a-f]{8}, [0-9a-f]{8}, \d+, "
                     r"[0-9a-f]{8}, [0-9a-f]{8}\)\s*$")
 # PPSSPP fills a0..t9 with this after a syscall: an unused argument slot.
 FILL = 0xDEADBEEF
@@ -86,7 +86,9 @@ def parse(lines, stubs, thread_names, stats=None):
             if LOOKS_BKP.search(line):
                 problem("malformed", f"malformed breakpoint line {line!r}")
             elif c := CREATE.search(line):
-                name_thread(int(c.group(1)), c.group(2))
+                uid = c.group(1)
+                if uid.isdigit() and int(uid, 16) < 0x80000000:    # not an error code
+                    name_thread(int(uid), c.group(2))
             continue
         if m.group(1):
             pc, uid, ra, *args = (int(x, 16) for x in m.group(1).split())

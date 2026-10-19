@@ -276,6 +276,33 @@ class TraceDiff(TempDir):
             self.assertIn("trace_diff:", r.stderr)
         self.assertIn("both traces are empty", r.stderr)
 
+    def test_values_must_be_8_hex_digits(self):
+        good = self.write([rec(0, DELAY, [1], 0)])
+        for v in (" 0x1 ", "1_0", "-0x1", "0x1", "0x0000000G", "0x000000001", "00000001"):
+            r = self.run_paths([self.write([dict(rec(0, DELAY, [1], 0), ret=v)]), good])
+            self.assertEqual(r.returncode, 2, v)
+            self.assertIn("8-digit hex", r.stderr)
+
+    def test_non_utf8_input(self):
+        path = self.tmp / "latin1.jsonl"
+        path.write_bytes(json.dumps(rec(0, DELAY, [1], 0)).encode() + b"\n\xff\xfe\n")
+        r = self.run_paths([str(path), self.write([rec(0, DELAY, [1], 0)])])
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("cannot read", r.stderr)
+
+    def test_unfinished_last_line_is_dropped(self):
+        t = [rec(0, DELAY, [1], 0)]
+        cut = self.write_text(json.dumps(t[0]) + "\n" + json.dumps(rec(1, DELAY, [2], 0))[:30])
+        r = self.run_paths([cut, self.write(t)])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("1 of 1 records match", r.stdout)
+        self.assertIn("dropped the unfinished last line", r.stderr)
+        # With a newline it is a bad line, and so is a bad line before the last.
+        for text in (json.dumps(t[0]) + "\n{cut\n", "{cut\n" + json.dumps(t[0])):
+            r = self.run_paths([self.write_text(text), self.write(t)])
+            self.assertEqual(r.returncode, 2, text)
+            self.assertNotIn("dropped", r.stderr)
+
     def test_missing_signature_table(self):
         t = [rec(0, DELAY, [1], 0)]
         r = self.diff(t, t, "--sigs", str(self.tmp / "nonexistent.txt"))

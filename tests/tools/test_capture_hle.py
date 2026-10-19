@@ -94,6 +94,12 @@ class ParseTest(unittest.TestCase):
                             S(0x08B30010, ROOT, 0x08A90104), R(0x08A90104, ROOT, 0)])
         self.assertEqual([r["thread"] for r in recs], ["worker", "root#2", "worker#2", "worker#3", "root"])
 
+    def test_failed_thread_creation_takes_no_name(self):
+        recs, _, _ = parse([create_info("80020193", "worker"), create_info("8002019a", "worker"),
+                            create_info(290, "worker"),
+                            S(0x08B30010, 290, 0x08A90104), R(0x08A90104, 290, 0)])
+        self.assertEqual(recs[0]["thread"], "worker")
+
     def test_callback_calls_come_before_their_wait(self):
         lines = [
             S(0x08B30030, ROOT, 0x08A90240, 7),                 # ...CB wait
