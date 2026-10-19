@@ -1,14 +1,23 @@
 """ppsspp.py's request/ticket protocol against FakePpsspp. Never starts PPSSPP."""
-import pathlib, socket, sys, tempfile, time, unittest
+import os, pathlib, socket, stat, sys, tempfile, time, unittest
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "tools"))
 from fakeppsspp import FakePpsspp  # noqa: E402
+from test_ws import Server, read_client_frame  # noqa: E402
+from oracle import ppsspp  # noqa: E402
 from oracle.ppsspp import Ppsspp, PpssppError, isolated_env, port_free, prepare_home  # noqa: E402
 
 
 def reply(m, **kw):
     return {"event": m["event"], "ticket": m["ticket"], **kw}
+
+
+def free_port():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 class PpssppTest(unittest.TestCase):
@@ -96,13 +105,82 @@ class PpssppTest(unittest.TestCase):
     def test_pause_while_stepping_sends_nothing(self):
         """PPSSPP never answers cpu.stepping when already stepping, so pause() must not wait for it."""
         srv = self.serve({
-            "cpu.status": lambda m: reply(m, stepping=True, paused=False, pc=0x08A8BD58, ticks=0),
+            "cpu.status": lambda m: [{"event": "cpu.stepping", "pc": 1, "ticks": 0},
+                                     reply(m, stepping=True, paused=False, pc=0x08A8BD58, ticks=0)],
         })
         p = self.connect(srv)
         self.assertEqual(p.pause(), 0x08A8BD58)
+        self.assertEqual(list(p.events), [], "the old stop is dropped")
         p.close()
         srv.join_checked(self)
         self.assertEqual([m["event"] for m in srv.received], ["cpu.status"])
+
+    def test_pause_drops_an_old_stop(self):
+        srv = self.serve({
+            "version": lambda m: [{"event": "cpu.stepping", "pc": 1, "ticks": 0}, reply(m)],
+            "cpu.status": lambda m: reply(m, stepping=False, paused=False, pc=0x08A8C000, ticks=5),
+            "cpu.stepping": lambda m: {"event": "cpu.stepping", "pc": 0x08A8C010, "ticks": 6},
+        })
+        p = self.connect(srv)
+        p.request("version")
+        self.assertEqual(p.pause(), 0x08A8C010)
+        p.close()
+        srv.join_checked(self)
+
+    def test_resume_waits(self):
+        srv = self.serve({"cpu.resume": lambda m: []})
+        p = self.connect(srv)
+        with self.assertRaisesRegex(PpssppError, "timed out"):
+            p.resume(timeout=0.3)
+        p.close()
+        srv.join_checked(self)
+
+    def test_timeout_between_messages_keeps_the_session(self):
+        srv = self.serve({"version": lambda m: reply(m, version="v1.20.4")})
+        p = self.connect(srv)
+        with self.assertRaisesRegex(PpssppError, "timed out"):
+            p.wait_stepping(0.2)
+        self.assertEqual(p.request("version")["version"], "v1.20.4")
+        p.close()
+        srv.join_checked(self)
+
+    def test_zero_timeout_polls(self):
+        srv = self.serve({
+            "version": lambda m: [{"event": "gpu.stats.get", "fps": 60}, reply(m)],
+            "poke": lambda m: {"event": "game.pause"},
+        })
+        p = self.connect(srv)
+        t = time.monotonic()
+        with self.assertRaises(PpssppError):
+            p.next_event("game.pause", 0)                          # nothing yet
+        self.assertLess(time.monotonic() - t, 0.5)
+        p.request("version")
+        self.assertEqual(p.next_event("gpu.stats.get", 0)["fps"], 60)  # queued
+        p.send("poke")
+        time.sleep(0.2)
+        self.assertEqual(p.next_event("game.pause", 0)["event"], "game.pause")  # arrived, unread
+        p.close()
+        srv.join_checked(self)
+
+    def test_noise_is_not_queued(self):
+        srv = self.serve({"version": lambda m: [{"event": "log", "message": "x"}] * 3 +
+                          [{"event": "input.analog"}, {"event": "game.pause"}, reply(m)]})
+        p = self.connect(srv)
+        p.ignore = ppsspp.NOISE
+        p.request("version")
+        self.assertEqual([m["event"] for m in p.events], ["game.pause"])
+        p.close()
+        srv.join_checked(self)
+
+    def test_closed_connection_is_a_ppsspp_error(self):
+        srv = Server(read_client_frame, status=b"HTTP/1.1 101 OK")   # reads the request, then hangs up
+        self.addCleanup(srv.sock.close)
+        srv.start()
+        p = self.connect(srv)
+        with self.assertRaisesRegex(PpssppError, "waiting for version.*closed"):
+            p.request("version")
+        p.close()
+        srv.join_checked(self)
 
     def test_wait_for_entry(self):
         """The debugger listens before the game is loaded: poll until it stops at the entry."""
@@ -203,6 +281,23 @@ class HomeTest(unittest.TestCase):
                 prepare_home(bad, root=self.root)
         self.assertTrue((outside / ".config/ppsspp").exists())
 
+    def test_ini_names_the_port(self):
+        home = prepare_home(self.root / "home", root=self.root, port=45999)
+        self.assertIn("RemoteISOPort = 45999\n", (home / ".config/ppsspp/PSP/SYSTEM/ppsspp.ini").read_text())
+
+    def test_prepare_home_refuses_symlinks(self):
+        target = self.root / "elsewhere"
+        (target / "ppsspp/PSP/SAVEDATA").mkdir(parents=True)
+        for name, link, to in ((".config", ".config", target), ("ppsspp", ".config/ppsspp", target / "ppsspp")):
+            with self.subTest(name):
+                home = self.root / f"home-{name}"
+                (home / link).parent.mkdir(parents=True, exist_ok=True)
+                (home / link).symlink_to(to)
+                with self.assertRaisesRegex(PpssppError, "symlink"):
+                    prepare_home(home, root=self.root)
+                self.assertTrue((target / "ppsspp/PSP/SAVEDATA").is_dir())
+                self.assertFalse((target / "ppsspp/PSP/SYSTEM").exists())
+
     def test_relative_home_is_made_absolute(self):
         home = pathlib.Path("build/oracle/ppsspp-home")
         env = isolated_env(home)
@@ -223,6 +318,68 @@ class PortTest(unittest.TestCase):
                 s.listen(1)
                 self.assertFalse(port_free(s.getsockname()[1]))
                 s.close()
+
+    def test_free_port(self):
+        self.assertTrue(port_free(free_port()))
+
+    def test_time_wait_does_not_count(self):
+        """PPSSPP closing first leaves a TIME_WAIT on its own port."""
+        with socket.socket() as srv:
+            srv.bind(("127.0.0.1", 0))
+            srv.listen(1)
+            port = srv.getsockname()[1]
+            with socket.create_connection(("127.0.0.1", port)) as c:
+                conn, _ = srv.accept()
+                conn.close()                                       # server side closes first
+                c.recv(1)
+        with socket.socket() as s, self.assertRaises(OSError):
+            s.bind(("0.0.0.0", port))                              # the TIME_WAIT is there
+        self.assertTrue(port_free(port))
+
+
+class LaunchTest(unittest.TestCase):
+    """launch()'s failure paths, with a shell script standing in for PPSSPP."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = pathlib.Path(tmp.name).resolve()
+        self.iso = self.root / "game.iso"
+        self.iso.write_bytes(b"")
+        self.home = self.root / "home"
+
+    def app(self, body):
+        app = self.root / "fakeapp"
+        app.write_text("#!/bin/sh\n" + body)
+        app.chmod(app.stat().st_mode | stat.S_IXUSR)
+        patcher = mock.patch.object(ppsspp, "APP", app)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_app_exits(self):
+        self.app("exit 3\n")
+        with self.assertRaisesRegex(PpssppError, "exited with 3"):
+            Ppsspp.launch(self.iso, self.home, port=free_port(), wait=5, root=self.root)
+
+    def test_debugger_never_opens(self):
+        pidfile = self.root / "pid"
+        self.app(f"echo $$ > '{pidfile}'\nexec sleep 60\n")
+        with self.assertRaisesRegex(PpssppError, "did not open the debugger"):
+            Ppsspp.launch(self.iso, self.home, port=free_port(), wait=0.5, root=self.root)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int(pidfile.read_text()), 0)
+
+    def test_busy_port_leaves_the_home_alone(self):
+        self.app("exit 0\n")
+        stale = self.home / ".config/ppsspp/PSP/SAVEDATA/x"
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b"x")
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            s.listen(1)
+            with self.assertRaisesRegex(PpssppError, "in use.*lsof"):
+                Ppsspp.launch(self.iso, self.home, port=s.getsockname()[1], wait=5, root=self.root)
+        self.assertTrue(stale.exists())
 
 
 if __name__ == "__main__":

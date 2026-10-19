@@ -55,16 +55,16 @@ Keys:
 
 Notes:
 
-- A minimal ini is enough. PPSSPP fills in every other key and rewrites the
-  file when it quits on SIGTERM (SIGKILL skips the save).
+- A minimal ini is enough. PPSSPP fills in every other key in memory. The
+  session writes the ini itself before every launch, so it never depends on
+  what PPSSPP saved.
 - `--log=` needs an absolute path.
-- Stop with `kill -TERM $PID` (it exits within a second or two), SIGKILL if it
-  hangs. Only ever signal PIDs the session started.
-- PPSSPP crashes while quitting (SIGABRT or SIGSEGV, exit code -6 or -11,
-  on SIGTERM and SIGINT alike), so macOS writes a `PPSSPPSDL-*.ips` crash
-  report to `~/Library/Logs/DiagnosticReports` for every run. The settings
-  locations below are not affected. The crash also skips the ini save (seen
-  in P2 Task 3: the minimal ini was still there after the run).
+- Stop with `kill -KILL $PID`. Only ever signal PIDs the session started.
+  On SIGTERM or SIGINT PPSSPP crashes while quitting (SIGABRT or SIGSEGV,
+  exit code -6 or -11), and macOS then writes a `PPSSPPSDL-*.ips` crash
+  report to `~/Library/Logs/DiagnosticReports`. SIGKILL writes none (checked:
+  the folder listing was identical before and after a run) and saves nothing
+  either.
 - `PPSSPPSDL --help` lists no memory stick option. The app bundle is not
   touched.
 
@@ -87,8 +87,11 @@ Checked on this machine:
 | subprotocol | `debugger.ppsspp.org` |
 | handshake reply | `HTTP/1.1 101 OK`, `Server: PPSSPPServer v0.1` |
 
-- If 45045 is taken, PPSSPP silently listens on a random port and saves that
-  port into the ini on exit. Check with `lsof -nP -iTCP:45045 -sTCP:LISTEN`.
+- If 45045 is taken, PPSSPP silently listens on a random port (and would
+  save that port into the ini if it quit cleanly). Check with
+  `lsof -nP -iTCP:45045 -sTCP:LISTEN`. The session's own check ignores a
+  `TIME_WAIT` from an earlier run (after a run `netstat -an` shows one, on
+  our side of the connection).
 - From reading PPSSPP's source (not checked with a packet capture): while
   this server runs, PPSSPP sends its local IP address and port to its own
   matchmaking host (`/match/update?local=IP&port=PORT`), every 9 minutes. It
