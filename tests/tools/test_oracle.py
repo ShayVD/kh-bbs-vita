@@ -170,6 +170,14 @@ class FirstDivergence(unittest.TestCase):
                     self.assertRaises(SystemExit):
                 self.run_oracle(FakeRunner(), "--timeout", bad)
 
+    def test_iso_required(self):
+        with mock.patch.dict(oracle.os.environ, {}, clear=True):
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as e:
+                oracle.main(["first-divergence", "--elf", "EBOOT.ELF"], runner=FakeRunner())
+        self.assertEqual(e.exception.code, 2)
+        self.assertIn("--iso", stderr.getvalue())
+
 
 class Run(unittest.TestCase):
     """The real runner, on a Python child instead of a tool."""
@@ -182,15 +190,6 @@ class Run(unittest.TestCase):
         self.assertEqual(code, 3)
         self.assertEqual(log.read_text().splitlines(),
                          [os.pathsep.join([str(oracle.TOOLS), "/elsewhere"]), "err"])
-
-
-    def test_iso_required(self):
-        with mock.patch.dict(oracle.os.environ, {}, clear=True):
-            stderr = io.StringIO()
-            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as e:
-                oracle.main(["first-divergence", "--elf", "EBOOT.ELF"], runner=FakeRunner())
-        self.assertEqual(e.exception.code, 2)
-        self.assertIn("--iso", stderr.getvalue())
 
 
 if __name__ == "__main__":
