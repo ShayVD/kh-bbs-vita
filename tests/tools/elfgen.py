@@ -57,16 +57,18 @@ MODULE_NIDS = 0x08900300
 MODULE_STUBS = 0x08900400
 
 
-def make_module_elf(imports, calls=None, tail_calls=()):
+def make_module_elf(imports, calls=None, tail_calls=(), other_calls=()):
     """A module with an import table, the way import_report.py reads it:
     `.rodata.sceModuleInfo`, one `.lib.stub` entry per library, a
     `.rodata.sceNid` table, 8-byte stubs in `.sceStub.text` (from
     MODULE_STUBS, in import order), and a `.text` (at MODULE_TEXT) of
-    `jal stub; nop` pairs, then `j stub; nop` pairs.
+    `jal stub; nop` pairs, then `jal addr; nop` pairs, then `j stub; nop`
+    pairs.
 
     imports: list of (library, [nid, ...]). calls / tail_calls: stub indices
     (counted over all libraries), each giving one jal / j; calls defaults to
-    one jal per stub."""
+    one jal per stub. other_calls: addresses that are not stubs, each giving
+    one jal."""
     nstubs = sum(len(nids) for _, nids in imports)
     calls = range(nstubs) if calls is None else calls
     strings, libstub, nidtab = b"", b"", b""
@@ -83,8 +85,9 @@ def make_module_elf(imports, calls=None, tail_calls=()):
     info = struct.pack("<HH28sIIIII", 0, 0x0101, b"synthetic", 0, 0, 0,
                        MODULE_LIBSTUB, MODULE_LIBSTUB + len(libstub))
     stubs = words(*[0x03E00008, 0] * nstubs)                 # jr ra; nop
-    text = b"".join(words(op << 26 | (MODULE_STUBS + 8 * i) >> 2 & 0x3FFFFFF, 0)
-                    for op, idx in ((3, calls), (2, tail_calls)) for i in idx)
+    targets = ([(3, MODULE_STUBS + 8 * i) for i in calls] + [(3, a) for a in other_calls] +
+               [(2, MODULE_STUBS + 8 * i) for i in tail_calls])
+    text = b"".join(words(op << 26 | addr >> 2 & 0x3FFFFFF, 0) for op, addr in targets)
     return make_elf([
         (".text", MODULE_TEXT, SHF_ALLOC | SHF_EXECINSTR, text),
         (".rodata.sceModuleInfo", MODULE_INFO, SHF_ALLOC, info),

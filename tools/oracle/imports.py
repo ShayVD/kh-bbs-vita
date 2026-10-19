@@ -14,21 +14,28 @@ PSPRECOMP = ROOT / "third_party/psprecomp"
 NAMES = ROOT / "tools/nid_names.txt"
 
 
-def stubs(elf, psprecomp=PSPRECOMP, names=NAMES):
-    """{stub_addr: (nid, name or None)} for every import of `elf`.
-    `psprecomp` (a checkout) and `names` (a names file) may be None."""
-    d, secs = import_report.load_elf(elf)
+def load(path):
+    """The module at `path`, read once for stubs() and return_sites().
+    Raises OSError, or ValueError if it is not an ELF."""
+    return import_report.load_elf(path)
+
+
+def stubs(module, psprecomp=PSPRECOMP, names=NAMES):
+    """{stub_addr: (nid, name or None)} for every import of `module` (from
+    load()). `psprecomp` (a checkout) and `names` (a names file) may be None."""
+    d, secs = module
     rt = import_report.runtime_nids(psprecomp)
     hashed, pinned = import_report.extra_names(names)
     return {stub: (nid, import_report.resolve_name(nid, rt, {}, hashed, pinned))
             for _lib, nid, stub in import_report.imports(d, secs)}
 
 
-def return_sites(elf, stub_addrs):
+def return_sites(module, stub_addrs):
     """{site_addr: stub_addr}: the address after the delay slot of every
-    `jal stub` in an executable section. A `j stub` (a tail call) has no
-    return site of its own; they are counted and reported on stderr."""
-    d, secs = import_report.load_elf(elf)
+    `jal stub` in an executable section of `module` (from load()). A `j stub`
+    (a tail call) has no return site of its own; they are counted and
+    reported on stderr."""
+    d, secs = module
     stub_addrs = set(stub_addrs)
     sites, tail = {}, 0
     for pc, op, target in import_report.jumps(d, secs):

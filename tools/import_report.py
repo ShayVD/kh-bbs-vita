@@ -33,7 +33,7 @@ def nid_of(name):
 def load_elf(path):
     d = pathlib.Path(path).read_bytes()
     if d[:4] != b"\x7fELF":
-        sys.exit(f"{path}: not an ELF (decrypt it first)")
+        raise ValueError(f"{path}: not an ELF (decrypt it first)")
     (_, _, _, _, entry, phoff, shoff, _, _, _, phn, _, shn, shstr) = struct.unpack_from(
         "<16sHHIIIIIHHHHHH", d)
     sh = [struct.unpack_from("<IIIIIIIIII", d, shoff + i * 40) for i in range(shn)]
@@ -156,7 +156,10 @@ def main():
     ap.add_argument("--md", action="store_true", help="markdown tables grouped by library")
     a = ap.parse_args()
 
-    d, secs = load_elf(a.module)
+    try:
+        d, secs = load_elf(a.module)
+    except ValueError as e:
+        sys.exit(str(e))
     imps = imports(d, secs)
     calls = call_counts(d, secs)
     sdk = sdk_names(a.pspsdk)
