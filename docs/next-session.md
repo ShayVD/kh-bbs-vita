@@ -15,7 +15,7 @@ Read first, in order: docs/plan.md (roadmap P1–P10), docs/bringup.md (the P1 a
 - Run: `perl -e 'alarm shift; exec @ARGV' 280 build/pc/hosts/pc/khbbs --elf game/EBOOT.dec.ELF --budget 50000000 --miss-log build/misses.jsonl --keep-going 1000`. Don't pass `--trace` at that budget (17.5 GB); use `--budget 200000` for traces. Exit codes: 0 returned, 3 first miss/budget, 4 after stepped-over misses, 5 guest break.
 - It runs with zero dispatch misses until the budget: the `DiscInfoBind` thread loops on `sceIoOpen("umd1:")` → not found + `sceKernelDelayThreadCB`, and psprecomp's run-to-completion threads never switch back to `user_main`. A NULL write32 at 0x4 happens earlier inside 0x08AE9700 (called from crt0 at 0x08A8C0EC). psprecomp's sysmem still allocates at 0x08C00000, inside the game image.
 - Dispatch misses are folded into bbs.toml with `python3 tools/merge_misses.py build/misses.jsonl` (it only trusts the first miss of a keep-going run unless `--all`).
-- SNC's pspas.exe under wibo-macos hung in uninterruptible state last session (possibly after lldb attempts). If `tools/toolchain/wibo-macos tools/toolchain/pspsnc_1.2.7503.0/pspas.exe` still hangs after a reboot, say so before relying on it.
+- SNC's pspas.exe under wibo-macos hung in uninterruptible state for a while last session (after lldb attempts) and then recovered; always run it under the perl alarm wrapper.
 - The VFPU code has many semantics marked UNVERIFIED in the fork (prefix lane wrap for narrow ops, vcmp's untouched cc bits, vcmov kept lanes under vpfxd, sin/cos last bits, vrot/vqmul lane conventions, conversion saturation and denormals, vsrt/vsgn NaN and ±0). None of it runs on the boot path yet.
 
 ## This session

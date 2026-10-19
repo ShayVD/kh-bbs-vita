@@ -127,8 +127,9 @@ traces stay in build/ and are never committed.
     safe only while they are copied, never computed with, so no fast-math;
   - the census sees loud gaps only; silent mis-decodes like the old `vhtfm`
     need their own checks, which P2's oracle provides.
-- Tooling notes: SNC's `pspas.exe` under `wibo-macos` started hanging in
-  uninterruptible (`U`) state partway through the session (after lldb
-  attempts); the stuck processes survive `kill -9`. It probably needs a
-  reboot. Every encoding P3 relies on was assembled with it earlier and is
-  pinned in the tests.
+- Tooling notes: SNC's `pspas.exe` under `wibo-macos` hung in uninterruptible
+  (`U`) state for part of the session (after lldb attempts); the stuck
+  processes cleared on their own about an hour later, and `pspas` worked again.
+  It then confirmed the `vidt` fix (`vidt.q C030` = `0xD0038083`, vd 3, so
+  the 1 goes in lane 3) and the emitter test words. Run it under the alarm
+  wrapper.
