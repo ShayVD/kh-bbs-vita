@@ -60,6 +60,11 @@ Notes:
 - `--log=` needs an absolute path.
 - Stop with `kill -TERM $PID` (it exits within a second or two), SIGKILL if it
   hangs. Only ever signal PIDs the session started.
+- PPSSPP crashes while quitting (SIGABRT or SIGSEGV, exit code -6 or -11,
+  on SIGTERM and SIGINT alike), so macOS writes a `PPSSPPSDL-*.ips` crash
+  report to `~/Library/Logs/DiagnosticReports` for every run. The settings
+  locations below are not affected. The crash also skips the ini save (seen
+  in P2 Task 3: the minimal ini was still there after the run).
 - `PPSSPPSDL --help` lists no memory stick option. The app bundle is not
   touched.
 
@@ -177,8 +182,10 @@ at any time without a ticket.
   breakpoint.
 - `memory.read`: see Memory below.
 - `broadcast.config.set` with `{"disallowed":{"logger":true,"input":true}}`
-  drops `log` and `input.analog` events. Never set `"stepping": true`: that
-  drops the `cpu.stepping` events the session waits for.
+  drops `log` and `input.analog` events. Send it after the game is loaded:
+  before that, PPSSPP rejects the key with `"Unsupported 'disallowed' object
+  key 'logger'"`. Never set `"stepping": true`: that drops the `cpu.stepping`
+  events the session waits for.
 - `log` events (`{timestamp, header, message, level, channel}`) are
   **unusable in 1.20.4**. After the first 1024 log messages on a connection
   the broadcaster re-sends stale entries from the start of its ring buffer
