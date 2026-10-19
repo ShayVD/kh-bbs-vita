@@ -54,31 +54,54 @@ EOF
   echo "ok: compilers in tools/toolchain/"
 }
 
-clone() {  # url dir commit [upstream-url]
-  local url=$1 dir=$root/third_party/$2 commit=$3 upstream=${4:-}
+clone() {  # url dir commit branch [upstream-url]
+  # `commit` is an abbreviated SHA. A server will not fetch an abbreviation,
+  # so a stale clone fetches the branch that holds it (or every branch, when
+  # `branch` is empty) and then checks it out. Anything short of HEAD being
+  # the pinned commit is an error.
+  local url=$1 dir=$root/third_party/$2 commit=$3 branch=$4 upstream=${5:-}
   mkdir -p "$root/third_party"
   if [[ ! -d "$dir/.git" ]]; then git clone -q "$url" "$dir"; fi
   if [[ -n "$upstream" ]] && ! git -C "$dir" remote get-url upstream >/dev/null 2>&1; then
     git -C "$dir" remote add upstream "$upstream"
   fi
-  if [[ "$(git -C "$dir" rev-parse HEAD)" != "$commit"* ]]; then
-    git -C "$dir" fetch -q origin "$commit" 2>/dev/null || git -C "$dir" fetch -q --unshallow origin 2>/dev/null || true
-    git -C "$dir" checkout -q "$commit"
+  local head; head=$(git -C "$dir" rev-parse HEAD)
+  if [[ "${head:0:${#commit}}" != "$commit" ]]; then
+    if ! git -C "$dir" cat-file -e "$commit^{commit}" 2>/dev/null; then
+      if [[ -n "$branch" ]]; then
+        git -C "$dir" fetch -q origin "$branch" ||
+          { echo "error: third_party/$2: cannot fetch branch $branch from origin" >&2; exit 1; }
+      else
+        git -C "$dir" fetch -q origin ||
+          { echo "error: third_party/$2: cannot fetch from origin" >&2; exit 1; }
+      fi
+    fi
+    git -C "$dir" checkout -q "$commit" ||
+      { echo "error: third_party/$2: cannot check out $commit${branch:+ (branch $branch)}" >&2; exit 1; }
+    head=$(git -C "$dir" rev-parse HEAD)
   fi
-  echo "ok: third_party/$2 at $(git -C "$dir" rev-parse --short HEAD)"
+  # The full SHA's prefix, not `rev-parse --short`, which lengthens an
+  # abbreviation that has become ambiguous.
+  if [[ "${head:0:${#commit}}" != "$commit" ]]; then
+    echo "error: third_party/$2 is at ${head:0:12}, the pin is $commit" >&2
+    exit 1
+  fi
+  echo "ok: third_party/$2 at $commit"
 }
 
 # Pinned commits; bump them here and in docs/setup.md together.
 psprecomp() {
   # Our fork (branch khbbs) of github.com/sp00nznet/psprecomp, based on caca759.
-  clone https://github.com/ShayVD/psprecomp psprecomp e75f505 https://github.com/sp00nznet/psprecomp
+  # Built as the top-level project, so its own tests are built too: CI runs
+  # them with ctest --test-dir third_party/psprecomp/build.
+  clone https://github.com/ShayVD/psprecomp psprecomp e75f505 khbbs https://github.com/sp00nznet/psprecomp
   cmake -S "$root/third_party/psprecomp" -B "$root/third_party/psprecomp/build" >/dev/null
   cmake --build "$root/third_party/psprecomp/build" >/dev/null
-  echo "ok: psprecomp built"
+  echo "ok: psprecomp built (with its tests)"
 }
 
 pspdecrypt() {
-  clone https://github.com/John-K/pspdecrypt pspdecrypt c156627
+  clone https://github.com/John-K/pspdecrypt pspdecrypt c156627 ""
   local ssl; ssl=$(brew --prefix openssl@3 2>/dev/null || echo /usr)
   make -s -C "$root/third_party/pspdecrypt" -j8 \
     CFLAGS="-O2 -I$ssl/include" CXXFLAGS="-O2 -std=c++11 -I$ssl/include" EXTRA_FLAG="-L$ssl/lib"
