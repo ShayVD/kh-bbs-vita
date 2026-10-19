@@ -4,33 +4,25 @@ Paste this to start the next session. Rewritten at the end of every session.
 
 ---
 
-We're continuing the KH Birth by Sleep (PSP, ULUS10505 v1.00) → native PC/Vita port at ~/Projects/kh-bbs-vita (remote github.com/ShayVD/kh-bbs-vita). P1 is merged (PR #3). Sister project for conventions: ~/Projects/kh1-decomp.
+We're continuing the KH Birth by Sleep (PSP, ULUS10505 v1.00) → native PC/Vita port at ~/Projects/kh-bbs-vita (remote github.com/ShayVD/kh-bbs-vita). P3 (recompiler fidelity) is in review as the PR from branch `p3-recompiler-fidelity`; if it is merged, start from main. Sister project for conventions: ~/Projects/kh1-decomp.
 
-Read first, in this order: docs/plan.md (roadmap P1–P10), docs/bringup.md (what the first boot did), docs/architecture.md, docs/setup.md, docs/toolchain.md, docs/phase0-report.md. The P1 plan in docs/superpowers/plans/2026-10-18-p1-build-skeleton.md shows the plan format we use.
+Read first, in order: docs/plan.md (roadmap P1–P10), docs/bringup.md (the P1 and P3 entries), docs/architecture.md, docs/setup.md, docs/superpowers/plans/2026-10-18-p2-oracle-tooling.md (the P2 plan, not started), docs/superpowers/plans/2026-10-18-p3-recompiler-fidelity.md (the plan format and what P3 did).
 
-## Where we are (end of session 2026-10-18)
+## Where we are (end of session 2026-10-19)
 
-- `cmake -S . -B build/pc -G Ninja && cmake --build build/pc` recompiles game/EBOOT.dec.ELF via our psprecomp fork (third_party/psprecomp, gitignored clone of github.com/ShayVD/psprecomp, branch khbbs, pinned at b925bd2 in tools/setup_toolchain.sh) and builds build/pc/hosts/pc/khbbs in ~12 s.
-- Run: `perl -e 'alarm shift; exec @ARGV' 120 build/pc/hosts/pc/khbbs --elf game/EBOOT.dec.ELF --trace build/trace.jsonl --budget 50000000` (macOS has no `timeout`; a guest busy-wait never dispatches, so always use the alarm).
-- It stops on a dispatch miss at 0x08A8BE6C: crt0's main-thread entry, passed to sceKernelCreateThread as a lui/addiu-built pointer. Function discovery never seeded it, so no code was emitted there.
-- Known issues for later plans:
-  - psprecomp's sysmem heap starts at 0x08C00000, inside the game image [0x08804018, 0x09F3D7D0) (P4).
-  - NID 0x35669D4C (the crt0 SDK-version setter) is unimplemented.
-  - The miss context has no function trace unless the generated code is built with PSPRECOMP_TRACE.
+- `cmake -S . -B build/pc -G Ninja && cmake --build build/pc` recompiles game/EBOOT.dec.ELF with our psprecomp fork (third_party/psprecomp, branch khbbs, pinned at e75f505) seeded from bbs.toml, and builds build/pc/hosts/pc/khbbs in ~13 s.
+- `python3 tools/unimpl_census.py build/pc/gen` reports 0 untranslated sites and 0 unhandled branches (36 guest `break` sites, 55 undiscovered static call targets).
+- Run: `perl -e 'alarm shift; exec @ARGV' 280 build/pc/hosts/pc/khbbs --elf game/EBOOT.dec.ELF --budget 50000000 --miss-log build/misses.jsonl --keep-going 1000`. Don't pass `--trace` at that budget (17.5 GB); use `--budget 200000` for traces. Exit codes: 0 returned, 3 first miss/budget, 4 after stepped-over misses, 5 guest break.
+- It runs with zero dispatch misses until the budget: the `DiscInfoBind` thread loops on `sceIoOpen("umd1:")` → not found + `sceKernelDelayThreadCB`, and psprecomp's run-to-completion threads never switch back to `user_main`. A NULL write32 at 0x4 happens earlier inside 0x08AE9700 (called from crt0 at 0x08A8C0EC). psprecomp's sysmem still allocates at 0x08C00000, inside the game image.
+- Dispatch misses are folded into bbs.toml with `python3 tools/merge_misses.py build/misses.jsonl` (it only trusts the first miss of a keep-going run unless `--all`).
+- SNC's pspas.exe under wibo-macos hung in uninterruptible state last session (possibly after lldb attempts). If `tools/toolchain/wibo-macos tools/toolchain/pspsnc_1.2.7503.0/pspas.exe` still hangs after a reboot, say so before relying on it.
+- The VFPU code has many semantics marked UNVERIFIED in the fork (prefix lane wrap for narrow ops, vcmp's untouched cc bits, vcmov kept lanes under vpfxd, sin/cos last bits, vrot/vqmul lane conventions, conversion saturation and denormals, vsrt/vsgn NaN and ±0). None of it runs on the boot path yet.
 
 ## This session
 
-1. Write the detailed plan for P3 (recompiler fidelity) in docs/superpowers/plans/, using the writing-plans skill and the P1 plan's format. It covers:
-   - discovering code reached only through pointers: lui/addiu (and lui/ori) address-pair seeding into executable sections, plus extra entry points/vtables/.cplinit seeds from a new bbs.toml;
-   - a dispatch-miss log plus tools/merge_misses.py;
-   - recognising the SNC `$at` switch tables (sltiu; beq; sll; lui $at; addu $at; lw $at; jr $at; 417 sites);
-   - the missing VFPU ops (mtv, mfv, vrot, vcmov, vcrsp, vsge, vslt, vf2in, plus the 121 unnamed encodings) and FPU round/floor/ceil.w.s, with unit tests.
-
-   P3 is done when there are zero psp_unimplemented sites in .text and zero dispatch misses on the boot path.
-2. Write the plan for P2 (PPSSPP oracle tooling: WebSocket client, HLE-trace capture and trace_diff.py against our JSON-lines trace, memory snapshot diff, frame diff). PPSSPP 1.20.4 is at ~/Applications/PPSSPPSDL.app.
-3. Show me both plans, then execute P3 with subagent-driven development: a fresh implementer per task, then a spec check, then a code-quality review, with every review finding fixed before the next task. In P1 every quality review found real bugs; keep that discipline.
-4. After P3, re-run khbbs, append a new entry to docs/bringup.md, and open a PR.
-5. At the end of the session, rewrite docs/next-session.md for the session after, and include it in the PR.
+1. Execute P2 (docs/superpowers/plans/2026-10-18-p2-oracle-tooling.md) with subagent-driven development: a fresh implementer per task, then a spec check, then a code-quality review, with every review finding fixed before the next task. Task 1 is a spike against the real PPSSPP 1.20.4 (~/Applications/PPSSPPSDL.app) in an isolated home under build/oracle/ppsspp-home; do not touch my PPSSPP settings. Then the gate: the first N firmware calls of PPSSPP and khbbs are diffed automatically and the first divergence is reported.
+2. Write the detailed P4 plan (kernel and scheduler: host-thread-plus-baton scheduler, the ThreadMan/LwMutex/event-flag/callback objects the boot path uses, DelayThread/vblank timing, deterministic time, sysmem placement around the image, the NULL write in 0x08AE9700), using P2's trace diff as the acceptance check. Show me the plan.
+3. Append a bring-up entry for the first oracle comparison, open a PR for P2, and rewrite docs/next-session.md for the session after (include it in the PR).
 
 ## Rules
 
