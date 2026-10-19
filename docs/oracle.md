@@ -236,6 +236,12 @@ raw plus a sidecar `FILE.json` (`base`, `size`, `event`, `side`, `nid`,
     tools/oracle/mem_diff.py build/oracle/khbbs-mem.bin build/oracle/ppsspp-mem.bin \
         --elf game/EBOOT.dec.ELF --ignore 0x08000000-0x08800000
 
+The NAME form is not symmetric: `snapshot.py` also matches an import whose
+NID is the SHA-1 NID of NAME, `khbbs` only a function psprecomp has
+registered under NAME, so use `0xNID:K` for a function khbbs has not
+implemented. Events are at most 127 characters (khbbs's buffer); both
+`snapshot.py` and `oracle.py` refuse longer ones.
+
 `mem_diff.py` joins differing bytes into one range when at most `--gap`
 (default 16) equal bytes lie between them. A range never crosses a section,
 the edge of the image or partition, or an `--ignore` hole. Gaps between

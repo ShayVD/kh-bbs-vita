@@ -96,6 +96,10 @@ def check(code, step):
 
 def first_divergence(o, runner):
     out = outputs(o)
+    for f in [p for f in out.values() for p in (f, sidecar(f))]:
+        for opt, x in (("--iso", o.iso), ("--elf", o.elf)):
+            if snapshot.same_file(f, x):
+                raise StepFailed(f"refusing --out-dir {o.out_dir}: {f} is also {opt}")
     out["khbbs"].parent.mkdir(parents=True, exist_ok=True)   # khbbs does not create it
     for f in out.values():
         f.unlink(missing_ok=True)
@@ -146,6 +150,15 @@ def positive(text):
     return n
 
 
+def event(text):
+    """--snapshot-at, checked as snapshot.py and khbbs check it."""
+    try:
+        snapshot.parse_event(text)
+    except snapshot.SnapshotError as e:
+        raise argparse.ArgumentTypeError(str(e)) from None
+    return text
+
+
 def positive_float(text):
     x = float(text)
     if not (x > 0 and math.isfinite(x)):
@@ -163,7 +176,7 @@ def main(argv=None, runner=run):
     fd.add_argument("-n", type=positive, default=200, help="records compared (default 200)")
     fd.add_argument("--budget", type=positive, default=200000,
                     help="khbbs dispatch budget (default 200000; its trace grows ~660 bytes a dispatch)")
-    fd.add_argument("--snapshot-at", metavar="EVENT", help="also compare RAM just before NAME:K or 0xNID:K")
+    fd.add_argument("--snapshot-at", type=event, metavar="EVENT", help="also compare RAM just before NAME:K or 0xNID:K")
     fd.add_argument("--out-dir", default=str(BUILD / "oracle"))
     fd.add_argument("--alarm", type=positive, default=120, help="seconds before khbbs is killed")
     fd.add_argument("--timeout", type=positive_float, default=120.0, help="seconds for each PPSSPP step")

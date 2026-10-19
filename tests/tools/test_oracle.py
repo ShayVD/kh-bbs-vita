@@ -170,6 +170,31 @@ class FirstDivergence(unittest.TestCase):
                     self.assertRaises(SystemExit):
                 self.run_oracle(FakeRunner(), "--timeout", bad)
 
+    def test_bad_snapshot_event_is_a_usage_error(self):
+        for bad in ("sceFoo", "sceFoo:0", "f" * 126 + ":1"):
+            r = FakeRunner()
+            with self.subTest(event=bad[:20]), contextlib.redirect_stderr(io.StringIO()) as err, \
+                    self.assertRaises(SystemExit) as e:
+                oracle.main(["first-divergence", "--iso", "game.iso", "--elf", "EBOOT.ELF",
+                             "--out-dir", str(self.out), "--snapshot-at", bad], runner=r)
+            self.assertEqual(e.exception.code, 2)
+            self.assertIn("bad event", err.getvalue())
+            self.assertEqual(r.cmds, [])
+
+    def test_refuses_output_that_is_an_input(self):
+        self.out.mkdir()
+        for opt, name in (("--iso", "khbbs.jsonl"), ("--elf", "ppsspp.jsonl"), ("--iso", "khbbs.log"),
+                          ("--elf", "ppsspp-mem.bin.json")):
+            with self.subTest(opt=opt, name=name):
+                victim = self.out / name
+                victim.write_text("precious\n")
+                r = FakeRunner()
+                code, _, err = self.run_oracle(r, opt, str(victim), "--snapshot-at", "sceKernelCreateThread:1")
+                self.assertEqual(code, 2)
+                self.assertIn(f"oracle: refusing --out-dir {self.out}: {victim} is also {opt}", err)
+                self.assertEqual(victim.read_text(), "precious\n")
+                self.assertEqual(r.cmds, [])
+
     def test_iso_required(self):
         with mock.patch.dict(oracle.os.environ, {}, clear=True):
             stderr = io.StringIO()

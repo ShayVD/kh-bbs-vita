@@ -65,6 +65,13 @@ class Snapshot(unittest.TestCase):
             with self.subTest(bad), self.assertRaises(SnapshotError):
                 snapshot.parse_event(bad)
 
+    def test_parse_event_length(self):
+        # runtime/snapshot.c keeps the event in a 128-byte buffer: 127 characters at most.
+        longest = "f" * 125 + ":1"
+        self.assertEqual(snapshot.parse_event(longest), (None, "f" * 125, 1))
+        with self.assertRaisesRegex(SnapshotError, "128"):
+            snapshot.parse_event("f" * 126 + ":1")
+
     def test_resolve(self):
         # By SHA-1 of the name (stubs() was given no names), and by NID.
         self.assertEqual(snapshot.resolve(self.stubs, None, "sceKernelCreateThread"), {STUB_CREATE: CREATE})

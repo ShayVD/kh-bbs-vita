@@ -28,7 +28,9 @@ from oracle import imports  # noqa: E402
 from oracle.ppsspp import Ppsspp, PpssppError  # noqa: E402
 
 BASE, SIZE = 0x08000000, 0x02000000
-# The grammar of runtime/snapshot.c: ASCII only, K from 1 to 0xFFFFFFFF.
+# The grammar of runtime/snapshot.c: ASCII only, K from 1 to 0xFFFFFFFF, and
+# shorter than its 128-byte event buffer (EVENT_MAX characters at most).
+EVENT_MAX = 127
 EVENT = re.compile(r"(?:(0[xX][0-9a-fA-F]{1,8})|([A-Za-z_]\w*)):(0[xX][0-9a-fA-F]+|\d+)", re.ASCII)
 K_MAX = 0xFFFFFFFF
 STUCK = 100                # consecutive stops at one non-target pc that abort
@@ -40,6 +42,9 @@ class SnapshotError(Exception):
 
 def parse_event(text):
     """(nid or None, name or None, k) from NAME:K or 0xNID:K."""
+    if len(text) > EVENT_MAX:
+        raise SnapshotError(f"bad event {text[:20]!r}...: {len(text)} characters, khbbs takes "
+                            f"fewer than 128")
     m = EVENT.fullmatch(text)
     if not m:
         raise SnapshotError(f"bad event {text!r} (want NAME:K or 0xNID:K, K >= 1)")
