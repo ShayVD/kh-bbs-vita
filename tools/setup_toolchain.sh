@@ -71,7 +71,7 @@ clone() {  # url dir commit [upstream-url]
 # Pinned commits; bump them here and in docs/setup.md together.
 psprecomp() {
   # Our fork (branch khbbs) of github.com/sp00nznet/psprecomp, based on caca759.
-  clone https://github.com/ShayVD/psprecomp psprecomp b925bd2 https://github.com/sp00nznet/psprecomp
+  clone https://github.com/ShayVD/psprecomp psprecomp e75f505 https://github.com/sp00nznet/psprecomp
   cmake -S "$root/third_party/psprecomp" -B "$root/third_party/psprecomp/build" >/dev/null
   cmake --build "$root/third_party/psprecomp/build" >/dev/null
   echo "ok: psprecomp built"
