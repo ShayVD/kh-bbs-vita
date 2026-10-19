@@ -14,22 +14,29 @@ static uint64_t g_want, g_seen;
 static char     g_path[1024];
 static int      g_fired;
 
-/* Writes the dump and its sidecar; 0 or -1. */
+/* Writes the dump and its sidecar; 0, or -1 with neither left behind. */
 static int write_snapshot(uint32_t nid, uint32_t ra) {
+    char side[sizeof g_path + 8];
+    snprintf(side, sizeof side, "%s.json", g_path);
     if (!psp_mem.ram) return -1;
     FILE *f = fopen(g_path, "wb");
     if (!f) return -1;
     int bad = fwrite(psp_mem.ram, 1, PSP_RAM_SIZE, f) != PSP_RAM_SIZE;
     bad |= fclose(f) != 0;
-    if (bad) return -1;
-    char side[sizeof g_path + 8];
-    snprintf(side, sizeof side, "%s.json", g_path);
-    f = fopen(side, "w");
-    if (!f) return -1;
-    bad = fprintf(f, "{\"base\":\"0x%08X\",\"size\":%u,\"event\":\"%s\",\"side\":\"khbbs\","
-                     "\"nid\":\"0x%08X\",\"ra\":\"0x%08X\"}\n",
-                  PSP_RAM_BASE, PSP_RAM_SIZE, g_event, nid, ra) < 0;
-    bad |= fclose(f) != 0;
+    if (!bad) {
+        f = fopen(side, "w");
+        bad = !f;
+    }
+    if (!bad) {
+        bad = fprintf(f, "{\"base\":\"0x%08X\",\"size\":%u,\"event\":\"%s\",\"side\":\"khbbs\","
+                         "\"nid\":\"0x%08X\",\"ra\":\"0x%08X\"}\n",
+                      PSP_RAM_BASE, PSP_RAM_SIZE, g_event, nid, ra) < 0;
+        bad |= fclose(f) != 0;
+    }
+    if (bad) {
+        remove(g_path);
+        remove(side);
+    }
     return bad ? -1 : 0;
 }
 
@@ -39,7 +46,8 @@ static void on_pre_call(uint32_t nid, const char *name, const uint32_t args[8], 
     if (++g_seen < g_want) return;
     psp_hle_set_pre_call(NULL);
     g_fired = write_snapshot(nid, ra) == 0 ? 1 : -1;
-    if (g_fired < 0) fprintf(stderr, "khbbs: cannot write snapshot %s\n", g_path);
+    if (g_fired < 0)
+        fprintf(stderr, "khbbs: cannot write snapshot %s (its directory must exist)\n", g_path);
 }
 
 /* NAME is a C identifier; NID is 0x and 1-8 hex digits. */

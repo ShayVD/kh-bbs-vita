@@ -235,6 +235,16 @@ raw plus a sidecar `FILE.json` (`base`, `size`, `event`, `side`, `nid`,
     tools/oracle/mem_diff.py build/oracle/khbbs-mem.bin build/oracle/ppsspp-mem.bin \
         --elf game/EBOOT.dec.ELF --ignore 0x08000000-0x08800000
 
+`mem_diff.py` joins differing bytes into one range when at most `--gap`
+(default 16) equal bytes lie between them. A range never crosses a section,
+the edge of the image or partition, or an `--ignore` hole. Gaps between
+sections inside the image are labelled `image (no section)`.
+
+Both snapshot tools delete old copies of the dump and its sidecar first, and
+both again if writing fails. They refuse an output path that is one of their
+inputs. khbbs only warns when the snapshot never fired or failed (its exit
+status is the run's), so callers check that the sidecar exists.
+
 khbbs takes it in psprecomp's pre-call hook, PPSSPP at a stopping breakpoint
 on the import stub (about 1 s). At `sceKernelCreateThread:1` both had the
 same `ra` (`0x08A8BE30`), and `.data`, `.bss` and the rest of the image

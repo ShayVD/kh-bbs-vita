@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 void psp_recomp_register(void);  /* generated */
 
@@ -25,7 +26,9 @@ static int usage(void) {
             "               [--snapshot-at NAME:K|0xNID:K --snapshot <file.bin>]\n"
             "--snapshot-at/--snapshot (together): just before the K-th call to firmware\n"
             "function NAME (or NID), write guest RAM 0x08000000-0x0A000000 to <file.bin>\n"
-            "and a sidecar <file.bin>.json, for tools/oracle/mem_diff.py\n"
+            "and a sidecar <file.bin>.json, for tools/oracle/mem_diff.py; any old copies\n"
+            "are removed first. A snapshot that never fired or failed to write only warns:\n"
+            "the exit status is the run's, so check that <file.bin>.json exists\n"
             "exit status: 0 the entry point returned; 3 the run stopped at its first\n"
             "dispatch miss or on budget; 4 it carried on past a miss (--keep-going) and then\n"
             "returned, ran out of budget, hit a guest break or stopped at a later miss, so\n"
@@ -33,6 +36,29 @@ static int usage(void) {
             "divide by zero, overflow or an assert) and no miss was stepped over before it;\n"
             "2 bad usage; 1 other failure\n");
     return 2;
+}
+
+/* Same path, or both exist and are the same file. */
+static int same_file(const char *a, const char *b) {
+    struct stat sa, sb;
+    if (!a || !b) return 0;
+    if (!strcmp(a, b)) return 1;
+    return stat(a, &sa) == 0 && stat(b, &sb) == 0 && sa.st_ino != 0 &&   /* 0: no inodes (Windows) */
+           sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino;
+}
+
+/* The snapshot and its sidecar are deleted when armed: never let either be an input or another output. */
+static int snapshot_clashes(const char *snap, const char *elf, const char *trace, const char *misslog) {
+    char side[4096];
+    if (snprintf(side, sizeof side, "%s.json", snap) >= (int)sizeof side) return 1;
+    const char *others[] = { elf, trace, misslog };
+    for (int i = 0; i < 3; i++) {
+        if (same_file(snap, others[i]) || same_file(side, others[i])) {
+            fprintf(stderr, "khbbs: refusing --snapshot %s: it or its sidecar is also %s\n", snap, others[i]);
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static const char *break_kind(uint32_t code) {
@@ -61,6 +87,7 @@ int main(int argc, char **argv) {
         else return usage();
     }
     if (!elf || !snap_at != !snap) return usage();
+    if (snap && snapshot_clashes(snap, elf, trace, misslog)) return 2;
 
     if (psp_mem_init() != 0) { fprintf(stderr, "khbbs: out of memory\n"); return 1; }
     psp_hle_init();
@@ -92,7 +119,10 @@ int main(int argc, char **argv) {
     if (snap) {
         khbbs_snapshot_disarm();
         if (khbbs_snapshot_fired() == 0)
-            fprintf(stderr, "khbbs: warning: snapshot event %s never happened; no snapshot written\n", snap_at);
+            fprintf(stderr, "khbbs: warning: snapshot event %s never happened; no snapshot written\n"
+                    "khbbs: (NAME matches only names psprecomp registers; an unimplemented\n"
+                    "khbbs: function needs the 0xNID:K form)\n",
+                    snap_at);
         else if (khbbs_snapshot_fired() > 0)
             printf("khbbs: snapshot at %s written to %s\n", snap_at, snap);
     }

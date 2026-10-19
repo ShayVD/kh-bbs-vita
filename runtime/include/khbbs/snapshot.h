@@ -23,7 +23,7 @@
  * 0, or -1 (message on stderr) for a bad event or an overlong path. */
 int  khbbs_snapshot_arm(const char *event, const char *path);
 /* 0 while the event has not come; 1 once the snapshot is written; -1 if the
- * event came but writing the dump or its sidecar failed. */
+ * event came but writing the dump or its sidecar failed (both are removed). */
 int  khbbs_snapshot_fired(void);
 void khbbs_snapshot_disarm(void);   /* removes the hook; fired() keeps its value */
 

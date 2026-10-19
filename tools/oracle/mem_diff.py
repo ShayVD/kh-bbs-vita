@@ -7,8 +7,11 @@ sidecars must agree on base and size.
 
 Differing bytes with at most GAP equal bytes between them form one range.
 Ranges never cross a region boundary: an allocated section of --elf (.text,
-.data, .bss, ...), or outside them "kernel partition" (below 0x08800000) or
-"user partition". Bytes inside an --ignore range [LO, HI) are not compared.
+.data, .bss, ...), "image (no section)" for the gaps between sections inside
+the image (from the lowest section start to the highest section end), and
+outside the image "kernel partition" (below 0x08800000) or "user partition".
+Bytes inside an --ignore range [LO, HI) are not compared, and no range
+bridges one.
 At most --limit ranges are printed (0: all), then the differing bytes per
 region.
 
@@ -63,15 +66,24 @@ def regions(base, size, elf=None):
     if elf is not None:
         try:
             _, table = import_report.load_elf(elf)
-        except (OSError, ValueError, struct.error) as e:
-            raise BadInput(f"--elf: {e}") from None
+        except (OSError, ValueError, struct.error, IndexError, KeyError) as e:
+            raise BadInput(f"--elf: malformed or unreadable ELF: {e!r}") from None
         secs = sorted((s["addr"], s["addr"] + s["size"], name) for name, s in table.items()
                       if s["flags"] & SHF_ALLOC and s["size"])
     out, end = [], base + size
+    img_lo = min((lo for lo, _, _ in secs), default=0)
+    img_hi = max((hi for _, hi, _ in secs), default=0)
 
     def fill(lo, hi):                       # outside every section
-        for a, b, label in ((lo, min(hi, USER), "kernel partition"), (max(lo, USER), hi, "user partition")):
-            if a < b:
+        cuts = sorted({lo, hi} | {c for c in (USER, img_lo, img_hi) if lo < c < hi})
+        for a, b in zip(cuts, cuts[1:]):
+            if img_lo <= a < img_hi:
+                label = "image (no section)"
+            else:
+                label = "kernel partition" if a < USER else "user partition"
+            if out and out[-1][2] == label and out[-1][1] == a:
+                out[-1] = (out[-1][0], b, label)
+            else:
                 out.append((a, b, label))
 
     at = base
@@ -156,14 +168,22 @@ def merge_intervals(iv):
 
 
 def compare(a, b, base, regs, ignore=(), gap=16):
-    """([(lo, hi, differing bytes, region index)], ignored differing bytes)."""
-    ranges, dropped = [], [0]
-    for lo, hi, ri in split(subtract(runs(a, b, base), ignore, dropped), regs):
+    """([(lo, hi, differing bytes, region index)], ignored differing bytes).
+    The regions are also cut at the --ignore boundaries, so no range bridges
+    an ignored hole."""
+    edges = sorted({e for h in merge_intervals(ignore) for e in h})
+    cuts = []                                # (lo, hi, region index)
+    for ri, (lo, hi, _) in enumerate(regs):
+        points = [lo] + [e for e in edges if lo < e < hi] + [hi]
+        cuts += [(x, y, ri) for x, y in zip(points, points[1:])]
+    ranges, last_cut, dropped = [], None, [0]
+    for lo, hi, ci in split(subtract(runs(a, b, base), ignore, dropped), cuts):
         last = ranges[-1] if ranges else None
-        if last and last[3] == ri and lo - last[1] <= gap:
-            ranges[-1] = (last[0], hi, last[2] + hi - lo, ri)
+        if last and ci == last_cut and lo - last[1] <= gap:
+            ranges[-1] = (last[0], hi, last[2] + hi - lo, last[3])
         else:
-            ranges.append((lo, hi, hi - lo, ri))
+            ranges.append((lo, hi, hi - lo, cuts[ci][2]))
+        last_cut = ci
     return ranges, dropped[0]
 
 

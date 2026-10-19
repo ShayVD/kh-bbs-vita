@@ -12,6 +12,7 @@ Result = collections.namedtuple("Result", "returncode stdout stderr")
 
 BASE, SIZE = 0x087FFC00, 0x1000          # 1 KiB of kernel partition, then 3 KiB of user partition
 TEXT, DATA, BSS = 0x08800000, 0x08800200, 0x08800300
+RODATA, IMAGE_END = 0x08800480, 0x08800500   # a gap before .rodata: "image (no section)"
 MERGED = (0x08800210, 0x08800218)        # 7 equal bytes apart: one range with the default gap
 SEPARATE = 0x087FFD00                    # kernel partition
 IGNORED = 0x08800900                     # user partition, inside IGNORE
@@ -31,6 +32,7 @@ class MemDiff(unittest.TestCase):
             (".text", TEXT, SHF_ALLOC | SHF_EXECINSTR, b"\0" * 0x200),
             (".data", DATA, SHF_ALLOC, b"\0" * 0x100),
             (".bss", BSS, SHF_ALLOC, b"", SHT_NOBITS, 0x100),
+            (".rodata", RODATA, SHF_ALLOC, b"\0" * 0x80),
             (".comment", 0, 0, b"not loaded"),
         ]))
         self.a = bytearray(range(256)) * (SIZE // 256)
@@ -110,11 +112,39 @@ class MemDiff(unittest.TestCase):
         r = self.run_diff(self.planted(*MERGED), "--gap", "7")
         self.assertEqual([x[:2] for x in self.ranges(r.stdout)], [(MERGED[0], MERGED[1] + 1)])
 
+    def test_no_range_bridges_an_ignored_hole(self):
+        lo, hi = 0x08800900, 0x08800908
+        r = self.run_diff(self.planted(lo, hi), "--ignore", "0x08800903-0x08800905")
+        self.assertEqual([x[:2] for x in self.ranges(r.stdout)], [(lo, lo + 1), (hi, hi + 1)])
+        # Also when the hole holds an ignored difference, and when two holes touch.
+        r = self.run_diff(self.planted(lo, lo + 4, hi), "--ignore", "0x08800903-0x08800904",
+                          "--ignore", "0x08800904-0x08800906")
+        self.assertEqual([x[:2] for x in self.ranges(r.stdout)], [(lo, lo + 1), (hi, hi + 1)])
+        self.assertIn("(1 more inside --ignore)", r.stdout)
+        # Without the hole they merge.
+        r = self.run_diff(self.planted(lo, hi))
+        self.assertEqual([x[:2] for x in self.ranges(r.stdout)], [(lo, hi + 1)])
+
+    def test_malformed_elf(self):
+        bad = bytearray(self.elf.read_bytes())
+        bad[0x32:0x34] = (99).to_bytes(2, "little")      # e_shstrndx past the section table
+        path = self.tmp / "bad.elf"
+        path.write_bytes(bytes(bad))
+        r = self.run_diff(self.a, "--elf", str(path))
+        self.assertEqual(r.returncode, 2, r)
+        self.assertIn("mem_diff: --elf", r.stderr)
+
     def test_ranges_split_at_section_boundaries(self):
-        r = self.run_diff(self.planted(DATA - 2, DATA - 1, DATA, DATA + 1, BSS + 0x100), "--elf", str(self.elf))
+        r = self.run_diff(self.planted(DATA - 2, DATA - 1, DATA, DATA + 1, BSS + 0x100, RODATA - 1,
+                                       RODATA, IMAGE_END - 1, IMAGE_END), "--elf", str(self.elf))
         self.assertEqual(self.ranges(r.stdout), [
             (DATA - 2, DATA, ".text"), (DATA, DATA + 2, ".data"),
-            (BSS + 0x100, BSS + 0x101, "user partition")])
+            (BSS + 0x100, BSS + 0x101, "image (no section)"),
+            (RODATA - 1, RODATA, "image (no section)"),
+            (RODATA, RODATA + 1, ".rodata"), (IMAGE_END - 1, IMAGE_END, ".rodata"),
+            (IMAGE_END, IMAGE_END + 1, "user partition")])
+        summary = r.stdout.split("by section:")[1]
+        self.assertRegex(summary, r"image \(no section\)\s+2 bytes in 2 ranges")
 
     def test_runs_across_block_boundaries(self):
         with mock.patch.object(mem_diff, "BLOCK", 64):

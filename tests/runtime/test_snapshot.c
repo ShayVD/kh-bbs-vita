@@ -119,6 +119,20 @@ int main(void) {
     CHECK(khbbs_snapshot_arm("sceIoOpen:1", "/nonexistent-dir/x.bin") == 0, "arm unwritable");
     psp_hle_call(NID_OPEN);
     CHECK(khbbs_snapshot_fired() == -1, "write failure reported");
+    CHECK(!exists("/nonexistent-dir/x.bin") && !exists("/nonexistent-dir/x.bin.json"),
+          "nothing left after a failed write");
+
+    /* The dump writes but its sidecar cannot: a 251-byte file name is fine,
+     * the sidecar's 256 bytes are over NAME_MAX. Neither is left behind. */
+    char lng[252];
+    memset(lng, 'x', sizeof lng - 1);
+    memcpy(lng, "t_snap_", 7);
+    memcpy(lng + sizeof lng - 5, ".bin", 5);
+    CHECK(khbbs_snapshot_arm("sceIoOpen:1", lng) == 0, "arm long name");
+    psp_hle_call(NID_OPEN);
+    CHECK(khbbs_snapshot_fired() == -1, "sidecar failure reported");
+    CHECK(!exists(lng), "dump removed after a sidecar failure");
+    remove(lng);
 
     /* Bad events are rejected and leave nothing armed. */
     static const char *bad[] = {
