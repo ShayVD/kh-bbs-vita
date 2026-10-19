@@ -95,7 +95,7 @@ def take(p, targets, k, event, out, timeout=120.0):
     one pc raise SnapshotError. Returns the number of other stops. On any
     error neither `out` nor its sidecar is left."""
     out, side = outputs(out)
-    for f in (out, side):
+    for f in (out, side):                        # main() did this too; take() is also called on its own
         f.unlink(missing_ok=True)
     try:
         return _take(p, targets, k, event, out, side, timeout)
@@ -127,10 +127,10 @@ def stop_at(p, targets, k, timeout):
         p.add_breakpoint(addr, enabled=True)
     deadline = time.monotonic() + timeout
     seen = other = same = 0
-    last = None                                  # pc of the last non-target stop
+    first = last = None                          # pcs of the first and last non-target stops
 
     def where():
-        tail = f"; last other stop at 0x{last:08X}" if last is not None else ""
+        tail = f"; first at 0x{first:08X}, last at 0x{last:08X}" if last is not None else ""
         return f"{seen} of {k} calls seen, {other} other stops{tail}"
 
     while True:
@@ -150,6 +150,7 @@ def stop_at(p, targets, k, timeout):
             continue
         other += 1
         same = same + 1 if pc == last else 1
+        first = pc if first is None else first
         last = pc
         if same >= STUCK:
             raise SnapshotError(f"guest stuck/faulting at 0x{pc:08X}: {STUCK} stops in a row there "

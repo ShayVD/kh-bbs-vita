@@ -38,13 +38,34 @@ static int usage(void) {
     return 2;
 }
 
-/* Same path, or both exist and are the same file. */
+static int same_inode(const struct stat *sa, const struct stat *sb) {
+    return sa->st_ino != 0 && sa->st_dev == sb->st_dev && sa->st_ino == sb->st_ino;  /* 0: no inodes (Windows) */
+}
+
+/* stat() of the directory holding path; *base is set to its last component. */
+static int stat_parent(const char *path, struct stat *st, const char **base) {
+    char dir[4096];
+    const char *slash = strrchr(path, '/');
+    *base = slash ? slash + 1 : path;
+    if (!slash) return stat(".", st);
+    size_t n = slash == path ? 1 : (size_t)(slash - path);   /* "/x": the root */
+    if (n >= sizeof dir) return -1;
+    memcpy(dir, path, n);
+    dir[n] = 0;
+    return stat(dir, st);
+}
+
+/* Same path, or both exist and are the same file, or neither exists and both
+ * name the same entry of the same directory (./t and t). */
 static int same_file(const char *a, const char *b) {
     struct stat sa, sb;
+    const char *ba, *bb;
     if (!a || !b) return 0;
     if (!strcmp(a, b)) return 1;
-    return stat(a, &sa) == 0 && stat(b, &sb) == 0 && sa.st_ino != 0 &&   /* 0: no inodes (Windows) */
-           sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino;
+    int ea = stat(a, &sa) == 0, eb = stat(b, &sb) == 0;
+    if (ea || eb) return ea && eb && same_inode(&sa, &sb);
+    return stat_parent(a, &sa, &ba) == 0 && stat_parent(b, &sb, &bb) == 0 && *ba &&
+           !strcmp(ba, bb) && same_inode(&sa, &sb);
 }
 
 /* The snapshot and its sidecar are deleted when armed: never let either be an input or another output. */

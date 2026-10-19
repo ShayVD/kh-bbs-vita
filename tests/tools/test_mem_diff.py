@@ -38,10 +38,13 @@ class MemDiff(unittest.TestCase):
         self.a = bytearray(range(256)) * (SIZE // 256)
 
     def write(self, name, data, meta):
-        path = self.tmp / name
+        """Write a dump and its sidecar; meta None: no sidecar (any old one is removed)."""
+        path, side = self.tmp / name, self.tmp / (name + ".json")
         path.write_bytes(bytes(data))
-        if meta is not None:
-            (self.tmp / (name + ".json")).write_text(json.dumps(meta))
+        if meta is None:
+            side.unlink(missing_ok=True)
+        else:
+            side.write_text(json.dumps(meta))
         return str(path)
 
     def planted(self, *addrs):
@@ -51,8 +54,11 @@ class MemDiff(unittest.TestCase):
         return b
 
     def run_diff(self, b, *opts, a=None, meta_a=None, meta_b=None):
-        pa = self.write("a.bin", self.a if a is None else a, sidecar("khbbs") if meta_a is None else meta_a)
-        pb = self.write("b.bin", b, sidecar("ppsspp") if meta_b is None else meta_b)
+        """meta_a / meta_b: None for the default sidecar, False for none."""
+        def meta(m, side):
+            return sidecar(side) if m is None else None if m is False else m
+        pa = self.write("a.bin", self.a if a is None else a, meta(meta_a, "khbbs"))
+        pb = self.write("b.bin", b, meta(meta_b, "ppsspp"))
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
@@ -171,17 +177,7 @@ class MemDiff(unittest.TestCase):
         }
         for what, kw in bad.items():
             with self.subTest(what):
-                if kw.get("meta_a") is False:
-                    (self.tmp / "a.bin.json").unlink(missing_ok=True)
-                    pa = self.tmp / "a.bin"
-                    pa.write_bytes(bytes(self.a))
-                    pb = self.write("b.bin", self.a, sidecar("ppsspp"))
-                    err = io.StringIO()
-                    with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
-                        code = mem_diff.main([str(pa), pb])
-                    r = Result(code, "", err.getvalue())
-                else:
-                    r = self.run_diff(self.a, **kw)
+                r = self.run_diff(self.a, **kw)
                 self.assertEqual(r.returncode, 2, r)
                 self.assertIn("mem_diff:", r.stderr)
         for spec in ("0x10", "0x20-0x10", "x-y", "0x08800000-"):

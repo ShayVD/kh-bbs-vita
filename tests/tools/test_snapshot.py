@@ -89,6 +89,22 @@ class Snapshot(unittest.TestCase):
                                '"side":"ppsspp","nid":"0x446D8DE6","ra":"0x08A8BE30"}\n')
         self.assertEqual(json.loads(side)["nid"], "0x%08X" % CREATE)
 
+    def test_two_stubs_import_the_same_nid(self):
+        # A second library also imports sceKernelCreateThread: its stub is the
+        # third. Both get a breakpoint, and stops on either count towards K.
+        elf = self.tmp / "two.elf"
+        elf.write_bytes(make_module_elf([("ThreadManForUser", [0x12345678, CREATE]), ("Other", [CREATE])]))
+        stubs = imports.stubs(imports.load(elf), None, None)
+        second = MODULE_STUBS + 16
+        targets = snapshot.resolve(stubs, None, "sceKernelCreateThread")
+        self.assertEqual(targets, {STUB_CREATE: CREATE, second: CREATE})
+        self.assertEqual(snapshot.resolve(stubs, CREATE, None), targets)
+        p = FakeSession([second, OTHER, STUB_CREATE, second])
+        self.assertEqual(snapshot.take(p, targets, 3, "sceKernelCreateThread:3", self.out), 1)
+        self.assertEqual(p.breakpoints, {STUB_CREATE: True, second: True})
+        self.assertEqual(p.calls[-1], ("read", 0x08000000, 0x02000000, second))
+        self.assertEqual(json.loads((self.tmp / "o/mem.bin.json").read_text())["nid"], "0x%08X" % CREATE)
+
     def test_take_failure_leaves_no_stale_snapshot(self):
         self.out.parent.mkdir()
         self.out.write_bytes(b"old")
@@ -111,9 +127,9 @@ class Snapshot(unittest.TestCase):
         with self.assertRaisesRegex(SnapshotError, r"timed out after 0 s \(0 of 1 calls seen"):
             snapshot.take(FakeSession([]), {STUB_CREATE: CREATE}, 1, "x:1", self.out, timeout=0)
 
-    def test_errors_name_the_last_other_stop(self):
-        p = FakeSession([OTHER, PpssppError("timed out after 1 s waiting for cpu.stepping")])
-        with self.assertRaisesRegex(SnapshotError, "1 other stops; last other stop at 0x08A00000"):
+    def test_errors_name_the_first_and_last_other_stop(self):
+        p = FakeSession([OTHER, OTHER + 8, OTHER + 4, PpssppError("timed out after 1 s waiting for cpu.stepping")])
+        with self.assertRaisesRegex(SnapshotError, "3 other stops; first at 0x08A00000, last at 0x08A00004"):
             snapshot.take(p, {STUB_CREATE: CREATE}, 1, "x:1", self.out)
 
     def test_stuck_guest(self):

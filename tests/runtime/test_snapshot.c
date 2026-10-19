@@ -40,6 +40,17 @@ static int exists(const char *path) {
     return f != NULL;
 }
 
+/* A directory: a file can be made inside it. */
+static int is_dir(const char *path) {
+    char probe[256];
+    snprintf(probe, sizeof probe, "%s/probe", path);
+    FILE *f = fopen(probe, "w");
+    if (!f) return 0;
+    fclose(f);
+    remove(probe);
+    return 1;
+}
+
 static uint32_t le32(const unsigned char *p) {
     return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
 }
@@ -122,8 +133,22 @@ int main(void) {
     CHECK(!exists("/nonexistent-dir/x.bin") && !exists("/nonexistent-dir/x.bin.json"),
           "nothing left after a failed write");
 
+    /* Directories in the way (made by the snapshot_dirs fixture) are not
+     * removed: remove() also deletes an empty directory. */
+    CHECK(is_dir("t_snap_dir.bin") && is_dir("t_snap_dir.bin.json") && is_dir("t_snap_sd.bin.json"),
+          "fixture directories exist");
+    CHECK(khbbs_snapshot_arm("sceIoOpen:1", "t_snap_dir.bin") == 0, "arm over directories");
+    CHECK(is_dir("t_snap_dir.bin") && is_dir("t_snap_dir.bin.json"), "arming keeps directories");
+    psp_hle_call(NID_OPEN);
+    CHECK(khbbs_snapshot_fired() == -1 && is_dir("t_snap_dir.bin"), "dump onto a directory fails");
+    CHECK(khbbs_snapshot_arm("sceIoOpen:1", "t_snap_sd.bin") == 0, "arm with a sidecar directory");
+    psp_hle_call(NID_OPEN);
+    CHECK(khbbs_snapshot_fired() == -1, "sidecar onto a directory fails");
+    CHECK(!exists("t_snap_sd.bin") && is_dir("t_snap_sd.bin.json"), "failed write keeps the directory");
+
     /* The dump writes but its sidecar cannot: a 251-byte file name is fine,
-     * the sidecar's 256 bytes are over NAME_MAX. Neither is left behind. */
+     * the sidecar's 256 bytes are over NAME_MAX. This relies on NAME_MAX
+     * being 255, as on macOS and Linux. Neither is left behind. */
     char lng[252];
     memset(lng, 'x', sizeof lng - 1);
     memcpy(lng, "t_snap_", 7);

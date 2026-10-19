@@ -228,6 +228,7 @@ means the same thing on both sides. Both write RAM `0x08000000`..`0x0A000000`
 raw plus a sidecar `FILE.json` (`base`, `size`, `event`, `side`, `nid`,
 `ra`):
 
+    mkdir -p build/oracle        # khbbs does not create the directory
     build/pc/hosts/pc/khbbs --elf game/EBOOT.dec.ELF --budget 200000 \
         --snapshot-at sceKernelCreateThread:1 --snapshot build/oracle/khbbs-mem.bin
     tools/oracle/snapshot.py --iso "$KHBBS_ISO" --elf game/EBOOT.dec.ELF \
@@ -253,10 +254,11 @@ matched. What differed:
 - The kernel partition (680,429 bytes): PPSSPP's own kernel structures.
   khbbs keeps its boot arguments and first stack there. Ignore it.
 - `.sceStub.text` (787 bytes): PPSSPP writes a `syscall` into each stub.
-- `.text`, 9 words: PPSSPP code patches that `replacements` did not put
-  back (`0x68......` and `0x6A......` words, around the entry function
-  `0x08A8BD58` and at `0x0881EF68`, `0x08AE94FC`, `0x08AE95D0`,
-  `0x08AE9700`).
+- `.text`, 51 bytes in 9 ranges: PPSSPP code patches that `replacements`
+  did not put back (`0x68......` and `0x6A......` words, around the entry
+  function `0x08A8BD58` and at `0x0881EF68`, `0x08AE94FC`, `0x08AE95D0`,
+  `0x08AE9700`). Two of the ranges, near the entry function, span several
+  words: 16 bytes from `0x08A8BD8C` and 52 bytes from `0x08A8BDCC`.
 - `0x09FFFC00`..`0x0A000000` (776 bytes): PPSSPP's root thread stack (filled
   with `0xFF`, thread uid `0x113` at its bottom). khbbs's stack is elsewhere.
 

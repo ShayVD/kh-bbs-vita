@@ -14,6 +14,17 @@ static uint64_t g_want, g_seen;
 static char     g_path[1024];
 static int      g_fired;
 
+/* remove() path only if it is a file we can read: remove() also deletes an
+ * empty directory on POSIX, where fopen() opens one but reading it fails. */
+static void remove_file(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+    (void)getc(f);
+    int file = !ferror(f);
+    fclose(f);
+    if (file) remove(path);
+}
+
 /* Writes the dump and its sidecar; 0, or -1 with neither left behind. */
 static int write_snapshot(uint32_t nid, uint32_t ra) {
     char side[sizeof g_path + 8];
@@ -34,8 +45,8 @@ static int write_snapshot(uint32_t nid, uint32_t ra) {
         bad |= fclose(f) != 0;
     }
     if (bad) {
-        remove(g_path);
-        remove(side);
+        remove_file(g_path);
+        remove_file(side);
     }
     return bad ? -1 : 0;
 }
@@ -94,8 +105,8 @@ int khbbs_snapshot_arm(const char *event, const char *path) {
     strcpy(g_path, path);
     char side[sizeof g_path + 8];
     snprintf(side, sizeof side, "%s.json", g_path);
-    remove(g_path);
-    remove(side);
+    remove_file(g_path);
+    remove_file(side);
     g_seen = 0;
     psp_hle_set_pre_call(on_pre_call);
     return 0;

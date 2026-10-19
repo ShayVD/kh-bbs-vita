@@ -136,10 +136,11 @@ def split(pieces, cuts):
             lo = min(hi, c_hi)
 
 
-def subtract(pieces, ignore, dropped):
-    """Yield the parts of sorted pieces outside every ignore range; add the
-    number of bytes taken away to dropped[0]."""
+def subtract(pieces, ignore):
+    """(parts, dropped): the parts of sorted pieces outside every ignore
+    range, in order, and the number of bytes taken away."""
     holes = merge_intervals(ignore)
+    out, dropped = [], 0
     for lo, hi in pieces:
         parts = [(lo, hi)]
         for h_lo, h_hi in holes:
@@ -153,11 +154,13 @@ def subtract(pieces, ignore, dropped):
                 if h_hi < p_hi:
                     nxt.append((h_hi, p_hi))
             parts = nxt
-        dropped[0] += hi - lo - sum(p_hi - p_lo for p_lo, p_hi in parts)
-        yield from parts
+        dropped += hi - lo - sum(p_hi - p_lo for p_lo, p_hi in parts)
+        out += parts
+    return out, dropped
 
 
 def merge_intervals(iv):
+    """(lo, hi) intervals sorted, with overlapping or touching ones joined."""
     out = []
     for lo, hi in sorted(iv):
         if out and lo <= out[-1][1]:
@@ -176,15 +179,16 @@ def compare(a, b, base, regs, ignore=(), gap=16):
     for ri, (lo, hi, _) in enumerate(regs):
         points = [lo] + [e for e in edges if lo < e < hi] + [hi]
         cuts += [(x, y, ri) for x, y in zip(points, points[1:])]
-    ranges, last_cut, dropped = [], None, [0]
-    for lo, hi, ci in split(subtract(runs(a, b, base), ignore, dropped), cuts):
+    kept, dropped = subtract(runs(a, b, base), ignore)
+    ranges, last_cut = [], None
+    for lo, hi, ci in split(kept, cuts):
         last = ranges[-1] if ranges else None
         if last and ci == last_cut and lo - last[1] <= gap:
             ranges[-1] = (last[0], hi, last[2] + hi - lo, last[3])
         else:
             ranges.append((lo, hi, hi - lo, cuts[ci][2]))
         last_cut = ci
-    return ranges, dropped[0]
+    return ranges, dropped
 
 
 def plural(n, word):
