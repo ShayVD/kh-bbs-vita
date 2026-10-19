@@ -1,7 +1,7 @@
 """oracle.py first-divergence with both sides stubbed: a fake runner stands in
 for khbbs, PPSSPP's capture, the snapshot tools and trace_diff, so no process
 starts. Every value is made up."""
-import contextlib, io, pathlib, sys, tempfile, unittest
+import contextlib, io, os, pathlib, sys, tempfile, unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "tools"))
@@ -139,15 +139,50 @@ class FirstDivergence(unittest.TestCase):
 
     def test_stale_outputs_removed(self):
         self.out.mkdir()
-        for name in ("khbbs.jsonl", "khbbs.log", "ppsspp.jsonl", "khbbs-mem.bin.json", "ppsspp-mem.bin.json"):
+        stale = ("khbbs.jsonl", "khbbs.log", "ppsspp.jsonl", "khbbs-mem.bin", "khbbs-mem.bin.json",
+                 "ppsspp-mem.bin", "ppsspp-mem.bin.json")
+        kept = ("khbbs.jsonl.json", "ppsspp.jsonl.json", "khbbs.log.json", "notes.json")
+        for name in stale + kept:
             (self.out / name).write_text("stale\n")
         r = FakeRunner(write=False)                  # khbbs exits 3 and writes nothing
         code, out, err = self.run_oracle(r, "--snapshot-at", "sceKernelCreateThread:1")
         self.assertEqual(code, 2)
-        self.assertIn("wrote no trace", err)
+        self.assertIn(f"wrote no trace to {self.out / 'khbbs.jsonl'} (exit 3); see {self.out / 'khbbs.log'}",
+                      err)
         self.assertIn("khbbs exited with 3; no stop line", out)
-        self.assertFalse((self.out / "ppsspp.jsonl").exists())
-        self.assertFalse((self.out / "khbbs-mem.bin.json").exists())
+        for name in stale:
+            self.assertFalse((self.out / name).exists(), name)
+        for name in kept:
+            self.assertTrue((self.out / name).exists(), name)
+
+    def test_khbbs_killed_by_signal(self):
+        for signal, note in ((14, "killed by signal 14 (SIGALRM: --alarm 120 s ran out)"),
+                             (9, "killed by signal 9")):
+            with self.subTest(signal=signal):
+                code, out, _ = self.run_oracle(FakeRunner({"khbbs": -signal}))
+                self.assertEqual(code, 0)            # the trace was written; trace_diff decides
+                self.assertIn("oracle: khbbs " + note + "; ", out)
+                self.assertNotIn("exited with", out)
+
+    def test_timeout_must_be_positive(self):
+        for bad in ("0", "-1", "nan", "x"):
+            with self.subTest(timeout=bad), contextlib.redirect_stderr(io.StringIO()), \
+                    self.assertRaises(SystemExit):
+                self.run_oracle(FakeRunner(), "--timeout", bad)
+
+
+class Run(unittest.TestCase):
+    """The real runner, on a Python child instead of a tool."""
+    def test_pythonpath_and_log(self):
+        tmp = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
+        log = tmp / "child.log"
+        child = "import os, sys; print(os.environ['PYTHONPATH'], flush=True); print('err', file=sys.stderr); sys.exit(3)"
+        with mock.patch.dict(oracle.os.environ, {"PYTHONPATH": "/elsewhere"}):
+            code = oracle.run([PY, "-c", child], log=log)
+        self.assertEqual(code, 3)
+        self.assertEqual(log.read_text().splitlines(),
+                         [os.pathsep.join([str(oracle.TOOLS), "/elsewhere"]), "err"])
+
 
     def test_iso_required(self):
         with mock.patch.dict(oracle.os.environ, {}, clear=True):

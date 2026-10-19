@@ -145,18 +145,24 @@ traces stay in build/ and are never committed.
   firmware calls; 131,080,097-byte trace, 19,655,175-byte log), then
   `capture_hle -n 200` (200 records, threads `root`, `user_main`,
   `DiscInfoBind`, `FlipThread`; no skipped lines), then
-  `trace_diff --map-uids -n 200`. Exit 1. The report, trimmed:
+  `trace_diff --map-uids -n 200`. Exit 1. The report (re-run as
+  `python3 tools/oracle/trace_diff.py build/oracle/khbbs.jsonl build/oracle/ppsspp.jsonl --map-uids -n 200`,
+  so the paths are relative):
 
   ```
   4 of 5 records match (one stream each; 2 uid pairs learned)
   first divergence at record 4 (A seq 4, B seq 4)
   differing: ret
   A: build/oracle/khbbs.jsonl
+      seq 1  sceKernelSetCompilerVersion(0x00030306) = 0x00000000  ra 0x08A8BD98
+      seq 2  sceKernelCreateThread(0x08B54608, 0x08A8BE6C, 0x00000013, 0x00037000, 0x80004000, 0x00000000) = 0x00040000  ra 0x08A8BE30
       seq 3  sceKernelAllocPartitionMemory(0x00000002, 0x08B54674, 0x00000003, 0x00001000, 0x00001000) = 0x00010001  ra 0x08A8C444
-    > {"seq": 4, "nid": "0x9D9A5BA1", "name": "sceKernelGetBlockHeadAddr", "ra": "0x08A8C45C", "args": ["0x00010001", ...], "ret": "0x08C00000", ...}
+    > {"seq": 4, "nid": "0x9D9A5BA1", "name": "sceKernelGetBlockHeadAddr", "ra": "0x08A8C45C", "args": ["0x00010001", "0x08B54674", "0x00000003", "0x00001000", "0x00001000", "0x00000000", "0x08B50000", "0x08B762E0"], "ret": "0x08C00000", "ret_hi": "0x09F10000"}
   B: build/oracle/ppsspp.jsonl
+      seq 1  sceKernelSetCompilerVersion(0x00030306) = 0x00000000  ra 0x08A8BD98
+      seq 2  sceKernelCreateThread(0x08B54608, 0x08A8BE6C, 0x00000013, 0x00037000, 0x80004000, 0x00000000) = 0x00000114  ra 0x08A8BE30
       seq 3  sceKernelAllocPartitionMemory(0x00000002, 0x08B54674, 0x00000003, 0x00001000, 0x00001000) = 0x00000115  ra 0x08A8C444
-    > {"seq": 4, "nid": "0x9D9A5BA1", "name": "sceKernelGetBlockHeadAddr", "ra": "0x08A8C45C", "args": ["0x00000115", null, ...], "ret": "0x09F3E000", ..., "thread": "user_main"}
+    > {"seq": 4, "nid": "0x9D9A5BA1", "name": "sceKernelGetBlockHeadAddr", "ra": "0x08A8C45C", "args": ["0x00000115", null, null, null, null, null, null, null], "ret": "0x09F3E000", "ret_hi": "0x09F10000", "thread": "user_main"}
   ```
 
 - Records 0-3 match: crt0's `0x35669D4C` and `sceKernelSetCompilerVersion`

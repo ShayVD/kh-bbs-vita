@@ -5,8 +5,9 @@ first-divergence runs, in order:
   1. khbbs under a perl alarm wrapper, with --budget and --trace OUT/khbbs.jsonl
      (and --snapshot-at EVENT --snapshot OUT/khbbs-mem.bin with --snapshot-at).
      Its output (megabytes of psprecomp warnings) goes to OUT/khbbs.log; its
-     exit status and stop line are printed, not judged: 3 (budget or first miss) is the
-     normal end here. Only a missing trace (or snapshot sidecar) is a failure.
+     exit status (or the signal that killed it) and stop line are printed,
+     not judged: 3 (budget or first miss) is the normal end here. Only a
+     missing trace (or snapshot sidecar) is a failure.
   2. python3 -m oracle.capture_hle -n N -o OUT/ppsspp.jsonl (PPSSPP, isolated
      home under build/oracle/ppsspp-home).
   3. With --snapshot-at: python3 -m oracle.snapshot -o OUT/ppsspp-mem.bin.
@@ -19,11 +20,14 @@ first-divergence runs, in order:
      line and does not change the exit status.
 
 Every step is a subprocess started through one runner (injectable, for the
-tests). The outputs of steps 1-3 (and khbbs.log) are removed before step 1, so a failed run
-never leaves stale ones.
+tests). OUT is --out-dir. OUT/khbbs.jsonl, ppsspp.jsonl, khbbs.log and
+khbbs-mem.bin, ppsspp-mem.bin (with their .json sidecars) are overwritten:
+they are removed before step 1, so a failed run never leaves stale ones.
+The PPSSPP home is always build/oracle/ppsspp-home.
 
-Exit status: trace_diff's (0 every compared record matches, 1 a divergence,
-2 bad input), or 2 when a step fails (no khbbs trace or snapshot, capture or
+Exit status: trace_diff's: 0 every compared record matches, 1 the report
+above shows the divergence (a crashing trace_diff also exits 1), 2 bad
+input. Or 2 when a step fails (no khbbs trace or snapshot, capture or
 PPSSPP snapshot exit non-zero, mem_diff exit 2).
 
 Usage:
@@ -33,7 +37,9 @@ Usage:
       [--timeout 120] [--khbbs build/pc/hosts/pc/khbbs]
 --iso defaults to $KHBBS_ISO.
 """
-import argparse, os, pathlib, subprocess, sys
+import argparse, math, os, pathlib, signal, subprocess, sys
+
+from . import snapshot
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 TOOLS = ROOT / "tools"
@@ -72,7 +78,15 @@ def outputs(o):
 
 
 def sidecar(path):
-    return pathlib.Path(str(path) + ".json")
+    return snapshot.outputs(path)[1]
+
+
+def ended(code, alarm):
+    """How khbbs ended: its exit status, or the signal (a negative code)."""
+    if code >= 0:
+        return f"exited with {code}"
+    note = f" (SIGALRM: --alarm {alarm} s ran out)" if -code == signal.SIGALRM else ""
+    return f"killed by signal {-code}{note}"
 
 
 def check(code, step):
@@ -85,6 +99,7 @@ def first_divergence(o, runner):
     out["khbbs"].parent.mkdir(parents=True, exist_ok=True)   # khbbs does not create it
     for f in out.values():
         f.unlink(missing_ok=True)
+    for f in (out["khbbs_mem"], out["ppsspp_mem"]):
         sidecar(f).unlink(missing_ok=True)
 
     cmd = ["perl", "-e", ALARM, str(o.alarm), str(o.khbbs), "--elf", o.elf,
@@ -97,10 +112,10 @@ def first_divergence(o, runner):
     except OSError:
         text = ""
     stop = [line for line in text.splitlines() if line.startswith("khbbs: stopped:")]
-    print(f"oracle: khbbs exited with {code}; " + (stop[-1] if stop else "no stop line")
+    print(f"oracle: khbbs {ended(code, o.alarm)}; " + (stop[-1] if stop else "no stop line")
           + f"; its output is in {out['khbbs_log']}")
     if not out["khbbs"].is_file() or out["khbbs"].stat().st_size == 0:
-        raise StepFailed(f"khbbs wrote no trace to {out['khbbs']} (exit {code})")
+        raise StepFailed(f"khbbs wrote no trace to {out['khbbs']} (exit {code}); see {out['khbbs_log']}")
     if o.snapshot_at and not sidecar(out["khbbs_mem"]).is_file():
         raise StepFailed(f"khbbs wrote no snapshot at {o.snapshot_at} (no {sidecar(out['khbbs_mem'])})")
 
@@ -131,6 +146,13 @@ def positive(text):
     return n
 
 
+def positive_float(text):
+    x = float(text)
+    if not (x > 0 and math.isfinite(x)):
+        raise argparse.ArgumentTypeError(f"must be a positive number of seconds, got {text}")
+    return x
+
+
 def main(argv=None, runner=run):
     ap = argparse.ArgumentParser(prog="oracle", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -144,7 +166,7 @@ def main(argv=None, runner=run):
     fd.add_argument("--snapshot-at", metavar="EVENT", help="also compare RAM just before NAME:K or 0xNID:K")
     fd.add_argument("--out-dir", default=str(BUILD / "oracle"))
     fd.add_argument("--alarm", type=positive, default=120, help="seconds before khbbs is killed")
-    fd.add_argument("--timeout", type=float, default=120.0, help="seconds for each PPSSPP step")
+    fd.add_argument("--timeout", type=positive_float, default=120.0, help="seconds for each PPSSPP step")
     fd.add_argument("--khbbs", default=str(KHBBS))
     o = ap.parse_args(argv)
     if not o.iso:

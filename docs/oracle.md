@@ -490,13 +490,16 @@ The budget is low on purpose: the khbbs trace grows by about 660 bytes per
 dispatch. At 200,000 dispatches it is 131 MB (589,623 firmware calls), far
 more than any `-n` needs.
 
-Outputs, all under `build/oracle/` and removed before every run:
-`khbbs.jsonl`, `khbbs.log` (khbbs's stdout and stderr: about 20 MB of
-psprecomp "unimplemented firmware call" lines at this budget),
-`ppsspp.jsonl`, and with `--snapshot-at` `khbbs-mem.bin`, `ppsspp-mem.bin`
-and their `.json` sidecars.
+Outputs, all under `--out-dir` (default `build/oracle/`), overwritten by
+every run (removed before it starts): `khbbs.jsonl`, `khbbs.log` (khbbs's
+stdout and stderr: about 20 MB of psprecomp "unimplemented firmware call"
+lines at this budget), `ppsspp.jsonl`, and with `--snapshot-at`
+`khbbs-mem.bin`, `ppsspp-mem.bin` and their `.json` sidecars. Other files
+there are left alone. The PPSSPP home stays at `build/oracle/ppsspp-home`
+whatever `--out-dir` is.
 
-khbbs's exit status and stop line are printed, not judged: exit 3 (budget
+khbbs's exit status (or `killed by signal N`; 14, SIGALRM, means
+`--alarm` ran out) and stop line are printed, not judged: exit 3 (budget
 or first miss) is the normal end. Exit status of `oracle.py`: `trace_diff`'s
 (0 every compared record matches, 1 a divergence, 2 bad input), or 2 when a
 step fails (khbbs wrote no trace or no snapshot sidecar, `capture_hle` or
