@@ -429,6 +429,22 @@ compared on every argument and `v0`, and the report says so. Usage and the
 - Frame 300 shows the auto-save notice that waits for a button press (no
   save data on the fresh memory stick).
 
+`tools/oracle/frame.py` grabs frame N this way: a stopping breakpoint on the
+stub (no trace), `a0`/`a1`/`a2` read at the Nth stop, `bufferwidth * 272`
+pixels read from `topaddr`, converted by `tools/oracle/vram.py` and cropped
+to 480x272. `--raw FILE` keeps the VRAM bytes and `FILE.json`. Then
+`tools/oracle/img_diff.py` compares two frames (khbbs writes its own from
+P6):
+
+    tools/oracle/frame.py --iso "$KHBBS_ISO" --elf game/EBOOT.dec.ELF \
+        --frame 600 -o build/oracle/ppsspp-frame-600.png
+    tools/oracle/img_diff.py build/oracle/khbbs-frame-600.png \
+        build/oracle/ppsspp-frame-600.png --mask build/oracle/frame-600-mask.png
+
+Frame 600 (`0x04044000`, stride 512, format 1; about 22 s with the launch)
+still shows the auto-save notice: white text in a red box, "OK" button.
+Two runs gave identical PNGs.
+
 ## Determinism
 
 PPSSPP's emulated time runs on its own cycle counter, so a boot from the same

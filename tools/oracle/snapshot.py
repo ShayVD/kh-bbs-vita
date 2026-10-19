@@ -106,6 +106,23 @@ def take(p, targets, k, event, out, timeout=120.0):
 
 
 def _take(p, targets, k, event, out, side, timeout):
+    pc, other = stop_at(p, targets, k, timeout)
+    regs = p.regs()
+    data = p.read_memory(BASE, SIZE)
+    if len(data) != SIZE:
+        raise SnapshotError(f"read {len(data)} bytes of RAM, expected {SIZE}")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(data)
+    side.write_text(sidecar(event, targets[pc], regs["ra"]))
+    return other
+
+
+def stop_at(p, targets, k, timeout):
+    """With PPSSPP `p` stopped: put a stopping breakpoint on every address in
+    `targets` and run until the k-th stop at any of them; `p` is left
+    stepping there. Stops elsewhere are resumed and not counted; STUCK in a
+    row at one pc raise SnapshotError, and so do a timeout or a lost
+    session. Returns (pc, number of other stops). frame.py uses it too."""
     for addr in targets:
         p.add_breakpoint(addr, enabled=True)
     deadline = time.monotonic() + timeout
@@ -137,14 +154,7 @@ def _take(p, targets, k, event, out, side, timeout):
         if same >= STUCK:
             raise SnapshotError(f"guest stuck/faulting at 0x{pc:08X}: {STUCK} stops in a row there "
                                 f"({where()})")
-    regs = p.regs()
-    data = p.read_memory(BASE, SIZE)
-    if len(data) != SIZE:
-        raise SnapshotError(f"read {len(data)} bytes of RAM, expected {SIZE}")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_bytes(data)
-    side.write_text(sidecar(event, targets[pc], regs["ra"]))
-    return other
+    return pc, other
 
 
 def main(argv=None):
