@@ -10,9 +10,11 @@
  * trace, then abort()s. Never returns. */
 void psp_unimplemented(uint32_t addr, const char *what);
 
-/* Make every VFPU trap fatal (through psp_unimplemented). Call once at
- * start-up. The address a VFPU trap reports is psp_cpu.pc, which is exact
- * only at dispatch boundaries. */
+/* Make every VFPU trap fatal (through psp_unimplemented). Every host must
+ * call it once at start-up (hosts/pc does; hosts/vita must too), or a trap
+ * only prints and the run carries on with wrong values. The address a VFPU
+ * trap reports is the trapping instruction's, which the generated code
+ * stores in psp_cpu.pc before each VFPU call. */
 void khbbs_install_traps(void);
 
 #endif
