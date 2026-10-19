@@ -462,3 +462,49 @@ auto-save notice), so only the boot up to there was tested. Real-time clock
 calls, input, save data and I/O timing settings can make runs differ, and
 wall-clock timing never matches `khbbs`. So comparisons key on events
 (per-thread call order, frame index), never on time.
+
+## Running it
+
+[tools/oracle/oracle.py](../tools/oracle/oracle.py) `first-divergence`
+runs both sides on the same boot and prints where they first disagree (the
+P2 gate):
+
+    PYTHONPATH=tools python3 -m oracle.oracle first-divergence \
+        --iso "$KHBBS_ISO" --elf game/EBOOT.dec.ELF -n 200 \
+        [--snapshot-at sceKernelCreateThread:1]
+
+In order: `khbbs` under the perl alarm wrapper with `--budget` and
+`--trace`, `capture_hle -n N`, with `--snapshot-at` also `snapshot.py`,
+then `trace_diff.py --map-uids -n N` and, with `--snapshot-at`,
+`mem_diff.py --elf ELF --ignore 0x08000000-0x08800000` (the kernel
+partition, see Snapshots). Each runs as `python3 -m oracle.X` with
+`tools/` on `PYTHONPATH`, and both reports are printed as they are.
+
+Options: `--iso` (default `$KHBBS_ISO`), `--elf`, `-n` (records compared,
+default 200), `--budget` (khbbs dispatches, default 200,000), `--snapshot-at
+NAME:K`, `--alarm` (seconds before khbbs is killed, default 120),
+`--timeout` (seconds for each PPSSPP step, default 120), `--out-dir`
+(default `build/oracle`), `--khbbs` (default `build/pc/hosts/pc/khbbs`).
+
+The budget is low on purpose: the khbbs trace grows by about 660 bytes per
+dispatch. At 200,000 dispatches it is 131 MB (589,623 firmware calls), far
+more than any `-n` needs.
+
+Outputs, all under `build/oracle/` and removed before every run:
+`khbbs.jsonl`, `khbbs.log` (khbbs's stdout and stderr: about 20 MB of
+psprecomp "unimplemented firmware call" lines at this budget),
+`ppsspp.jsonl`, and with `--snapshot-at` `khbbs-mem.bin`, `ppsspp-mem.bin`
+and their `.json` sidecars.
+
+khbbs's exit status and stop line are printed, not judged: exit 3 (budget
+or first miss) is the normal end. Exit status of `oracle.py`: `trace_diff`'s
+(0 every compared record matches, 1 a divergence, 2 bad input), or 2 when a
+step fails (khbbs wrote no trace or no snapshot sidecar, `capture_hle` or
+`snapshot.py` exited non-zero, `mem_diff` exited 2). A memory difference is
+printed as `oracle: memory differs at EVENT ...` after `mem_diff`'s report
+and does not change the exit status.
+
+It takes about 3 s with `-n 200` and about 4 s with `--snapshot-at
+sceKernelCreateThread:1` (wall time on this Mac, PPSSPP launches included).
+The first result is in [bringup.md](bringup.md), "P2, first oracle
+comparison".

@@ -133,3 +133,82 @@ traces stay in build/ and are never committed.
   It then confirmed the `vidt` fix (`vidt.q C030` = `0xD0038083`, vd 3, so
   the 1 goes in lane 3) and the emitter test words. Run it under the alarm
   wrapper.
+
+## P2, first oracle comparison (2026-10-19)
+
+- Build: psprecomp `34bab3c` (the pin in [setup.md](setup.md)), `build/pc`
+  unchanged since P3 (`cmake --build build/pc`: no work to do). PPSSPP
+  1.20.4 SDL, isolated home under `build/oracle/ppsspp-home`.
+- Command: `PYTHONPATH=tools python3 -m oracle.oracle first-divergence --iso "$KHBBS_ISO" --elf game/EBOOT.dec.ELF -n 200`
+  (3.2 s wall). It ran `perl -e 'alarm shift; exec @ARGV' 120 build/pc/hosts/pc/khbbs --elf game/EBOOT.dec.ELF --trace build/oracle/khbbs.jsonl --budget 200000`
+  (exit 3: dispatch budget exhausted, 200,000 dispatches, 589,623 traced
+  firmware calls; 131,080,097-byte trace, 19,655,175-byte log), then
+  `capture_hle -n 200` (200 records, threads `root`, `user_main`,
+  `DiscInfoBind`, `FlipThread`; no skipped lines), then
+  `trace_diff --map-uids -n 200`. Exit 1. The report, trimmed:
+
+  ```
+  4 of 5 records match (one stream each; 2 uid pairs learned)
+  first divergence at record 4 (A seq 4, B seq 4)
+  differing: ret
+  A: build/oracle/khbbs.jsonl
+      seq 3  sceKernelAllocPartitionMemory(0x00000002, 0x08B54674, 0x00000003, 0x00001000, 0x00001000) = 0x00010001  ra 0x08A8C444
+    > {"seq": 4, "nid": "0x9D9A5BA1", "name": "sceKernelGetBlockHeadAddr", "ra": "0x08A8C45C", "args": ["0x00010001", ...], "ret": "0x08C00000", ...}
+  B: build/oracle/ppsspp.jsonl
+      seq 3  sceKernelAllocPartitionMemory(0x00000002, 0x08B54674, 0x00000003, 0x00001000, 0x00001000) = 0x00000115  ra 0x08A8C444
+    > {"seq": 4, "nid": "0x9D9A5BA1", "name": "sceKernelGetBlockHeadAddr", "ra": "0x08A8C45C", "args": ["0x00000115", null, ...], "ret": "0x09F3E000", ..., "thread": "user_main"}
+  ```
+
+- Records 0-3 match: crt0's `0x35669D4C` and `sceKernelSetCompilerVersion`
+  on `root`, `sceKernelCreateThread(user_main)` (uid `0x00040000` against
+  PPSSPP's `0x114`, mapped), and `user_main`'s first
+  `sceKernelAllocPartitionMemory(2, ..., 3, 0x1000, 0x1000)` (uid `0x10001`
+  against `0x115`, mapped). With `-n 4` the gate reports `4 of 4 records
+  match`, exit 0.
+- The divergence is real, not a tooling artefact: same NID, same `ra`, same
+  (mapped) block uid, and `sceKernelGetBlockHeadAddr` is compared raw on
+  purpose. It is the sysmem placement found in P1: psprecomp's user
+  partition hands out low blocks from `0x08C00000`, inside the game image
+  `[0x08804018, 0x09F3D7D0)`; PPSSPP puts the same 4 KiB block at
+  `0x09F3E000`, the first 4 KiB boundary after the image's end (inferred from
+  the addresses; PPSSPP's allocator was not read). So in khbbs the game
+  will write its data over its own image (inferred: no write was traced).
+- Further on (looked at with `trace_diff --ignore-arg
+  sceKernelGetBlockHeadAddr:ret` and by listing both traces; not part of
+  the gate): record 5, `sceKernelCreateMutex` (`0xB7D098C6`), returns 0 in
+  khbbs (unimplemented) and uid `0x116` in PPSSPP. The NID sequence stays
+  the same up to record 16; at record 15 `0x87440F5E` returns 0 in khbbs
+  (unimplemented) and 1 in PPSSPP, record 16 `0x46EBB729` gets that value
+  as `a0`, and from record 17 khbbs makes an extra `0x8EF08FCE(2, ...)`
+  call PPSSPP does not make (inferred: a branch on the return value). After
+  `sceKernelCreateThread("DiscInfoBind")` (khbbs record 21, PPSSPP 20) the
+  order differs by scheduling too: in PPSSPP both
+  `sceKernelStartThread` calls return (`DiscInfoBind`'s on `user_main`,
+  then `user_main`'s on `root`) before `DiscInfoBind` runs, in khbbs
+  neither does. `DiscInfoBind`'s first `sceIoOpen` (`umd1:`, per P3; same `a0` on both
+  sides) returns fd 3 in
+  PPSSPP and `0x80010002` in khbbs. khbbs's log has 393,081 unimplemented
+  calls, nearly all of four NIDs in `DiscInfoBind`'s loop (`0x8EF08FCE`,
+  `0x6B4A146C`, `0x1FC64E09`, `0x15B6446B`, about 98,270 each).
+- Once khbbs writes `thread`, trace_diff compares per thread and the
+  scheduling order stops mattering. Until then (one stream each) it compares
+  in return order, which is only right while both sides switch threads at
+  the same calls: here they do for every record up to the first divergence
+  (records 0-2 on `root`; 3-4 on `user_main`, which `root`'s
+  `sceKernelStartThread` switched to before returning, on both sides).
+- Snapshot: `... first-divergence ... -n 200 --snapshot-at sceKernelCreateThread:1`
+  (4.2 s wall; exit 1, same trace report). Both sides stopped with `ra
+  0x08A8BE30`. `mem_diff --elf --ignore 0x08000000-0x08800000`: 1,614
+  bytes differ in 13 ranges (680,429 more inside the ignored kernel
+  partition): `.text` 51 bytes in 9 ranges, `.sceStub.text` 787 bytes in
+  1 range, user partition 776 bytes in 3 ranges (`0x09FFFC00`..`0x0A000000`).
+  These are exactly the PPSSPP artefacts listed in [oracle.md](oracle.md),
+  "Snapshots" (code patches, stub syscalls, PPSSPP's root thread stack);
+  `.data`, `.bss` and the rest of the image match.
+- What this means for P4/P5: P4's first oracle target is sysmem placement
+  (user partition outside the image, matching PPSSPP's `0x09F3E000` for the
+  first block), then `sceKernelCreateMutex` and the unimplemented NIDs above
+  (`0x87440F5E`'s return changes control flow, inferred above), then a scheduler in
+  which `sceKernelStartThread` returns, and `thread` in khbbs's trace records
+  (named by the rule in oracle.md) so the comparison goes per thread. P5:
+  `umd1:` so `sceIoOpen` succeeds.
