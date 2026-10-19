@@ -4,6 +4,7 @@
 #include "khbbs/boot.h"
 #include "khbbs/loader.h"
 #include "khbbs/misslog.h"
+#include "khbbs/snapshot.h"
 #include "khbbs/trace.h"
 #include "khbbs/unimplemented.h"
 #include "psprecomp/dispatch.h"
@@ -21,6 +22,10 @@ void psp_recomp_register(void);  /* generated */
 static int usage(void) {
     fprintf(stderr, "usage: khbbs --elf <EBOOT.dec.ELF> [--trace <file.jsonl>] [--budget N]\n"
             "               [--miss-log <file.jsonl>] [--keep-going N]\n"
+            "               [--snapshot-at NAME:K|0xNID:K --snapshot <file.bin>]\n"
+            "--snapshot-at/--snapshot (together): just before the K-th call to firmware\n"
+            "function NAME (or NID), write guest RAM 0x08000000-0x0A000000 to <file.bin>\n"
+            "and a sidecar <file.bin>.json, for tools/oracle/mem_diff.py\n"
             "exit status: 0 the entry point returned; 3 the run stopped at its first\n"
             "dispatch miss or on budget; 4 it carried on past a miss (--keep-going) and then\n"
             "returned, ran out of budget, hit a guest break or stopped at a later miss, so\n"
@@ -39,12 +44,14 @@ static const char *break_kind(uint32_t code) {
 }
 
 int main(int argc, char **argv) {
-    const char *elf = NULL, *trace = NULL, *misslog = NULL;
+    const char *elf = NULL, *trace = NULL, *misslog = NULL, *snap_at = NULL, *snap = NULL;
     uint64_t budget = 0, keep = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--elf") && i + 1 < argc) elf = argv[++i];
         else if (!strcmp(argv[i], "--trace") && i + 1 < argc) trace = argv[++i];
         else if (!strcmp(argv[i], "--miss-log") && i + 1 < argc) misslog = argv[++i];
+        else if (!strcmp(argv[i], "--snapshot-at") && i + 1 < argc) snap_at = argv[++i];
+        else if (!strcmp(argv[i], "--snapshot") && i + 1 < argc) snap = argv[++i];
         else if (!strcmp(argv[i], "--budget") && i + 1 < argc) {
             if (!khbbs_parse_count(argv[++i], &budget)) return usage();
         }
@@ -53,7 +60,7 @@ int main(int argc, char **argv) {
         }
         else return usage();
     }
-    if (!elf) return usage();
+    if (!elf || !snap_at != !snap) return usage();
 
     if (psp_mem_init() != 0) { fprintf(stderr, "khbbs: out of memory\n"); return 1; }
     psp_hle_init();
@@ -61,6 +68,7 @@ int main(int argc, char **argv) {
     psp_recomp_register();
     if (trace && khbbs_trace_open(trace) != 0) return 1;
     if (misslog && khbbs_misslog_open(misslog) != 0) return 1;
+    if (snap && khbbs_snapshot_arm(snap_at, snap) != 0) return 2;
 
     khbbs_image img;
     if (khbbs_load_elf(elf, &img) != 0) return 1;
@@ -81,6 +89,13 @@ int main(int argc, char **argv) {
     if (r.why == KHBBS_DISPATCH_MISS || r.why == KHBBS_GUEST_BREAK) psp_miss_context();
     if (trace && khbbs_trace_close() != 0) fprintf(stderr, "khbbs: trace write failed\n");
     if (misslog && khbbs_misslog_close() != 0) fprintf(stderr, "khbbs: miss log write failed\n");
+    if (snap) {
+        khbbs_snapshot_disarm();
+        if (khbbs_snapshot_fired() == 0)
+            fprintf(stderr, "khbbs: warning: snapshot event %s never happened; no snapshot written\n", snap_at);
+        else if (khbbs_snapshot_fired() > 0)
+            printf("khbbs: snapshot at %s written to %s\n", snap_at, snap);
+    }
     /* A run that carried on past a miss ran on made-up results (boot.h). */
     if (r.misses > (r.why == KHBBS_DISPATCH_MISS ? 1u : 0u)) return 4;
     if (r.why == KHBBS_GUEST_BREAK) return 5;
