@@ -6,6 +6,7 @@
 #include "psprecomp/cpu.h"
 #include "psprecomp/dispatch.h"
 #include "psprecomp/mem.h"
+#include "psprecomp/vfpu.h"
 
 #include <stdio.h>
 #include <signal.h>
@@ -74,6 +75,19 @@ static void aborts_outside_boot(const char *after) {
     CHECK(WIFSIGNALED(st) && WTERMSIG(st) == SIGABRT, msg);
 }
 static void spin(void) { psp_dispatch(0x08804300u); }
+/* VFPU state a run leaves behind: a pending prefix, an advanced vrnd
+ * generator. The next boot must not see either. */
+static void leave_vfpu_state(void) {
+    for (int i = 0; i < 3; i++) psp_vrnd(PSP_VR_I, 0x00u, 1);
+    psp_vfpu_set_prefix(PSP_VPFX_S, 0x1Bu);
+}
+static int seen_pending;
+static uint32_t seen_draw;
+static void look_at_vfpu(void) {
+    seen_pending = psp_vfpu_prefix_pending();
+    psp_vrnd(PSP_VR_I, 0x00u, 1);
+    seen_draw = psp_mfv(0x00u);
+}
 
 int main(void) {
     CHECK(psp_mem_init() == 0, "memory");
@@ -85,6 +99,8 @@ int main(void) {
     psp_register(0x08804600u, many_wild);
     psp_register(0x08804700u, asserts);
     psp_register(0x08804800u, miss_then_break);
+    psp_register(0x08804900u, leave_vfpu_state);
+    psp_register(0x08804A00u, look_at_vfpu);
 
     const char *path = "ms0:/PSP/GAME/KH/EBOOT.BIN";
     khbbs_image img = {0};
@@ -168,6 +184,21 @@ int main(void) {
     img.entry = 0x08804100u;
     r = khbbs_boot(&img, path, NULL);
     CHECK(r.why == KHBBS_RETURNED && r.code == 0, "a run after a break is clean");
+
+    /* Every boot starts from a reset VFPU: no prefix pending, the vrnd
+     * generator at its seed. */
+    img.entry = 0x08804A00u;
+    r = khbbs_boot(&img, path, NULL);
+    const uint32_t first_draw = seen_draw;
+    CHECK(r.why == KHBBS_RETURNED && !seen_pending, "a first boot has no VFPU prefix pending");
+    img.entry = 0x08804900u;
+    r = khbbs_boot(&img, path, NULL);
+    CHECK(r.why == KHBBS_RETURNED && psp_vfpu_prefix_pending(), "a run can end with a prefix pending");
+    img.entry = 0x08804A00u;
+    r = khbbs_boot(&img, path, NULL);
+    CHECK(!seen_pending, "a prefix left pending does not leak into the next boot");
+    CHECK(seen_draw == first_draw, "the vrnd generator restarts at every boot");
+    psp_vfpu_reset();
 
     char longpath[400];
     memset(longpath, 'x', sizeof longpath - 1);

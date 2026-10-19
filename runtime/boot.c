@@ -5,6 +5,7 @@
 #include "psprecomp/cpu.h"
 #include "psprecomp/dispatch.h"
 #include "psprecomp/mem.h"
+#include "psprecomp/vfpu.h"
 
 #include <setjmp.h>
 #include <stdint.h>
@@ -104,6 +105,7 @@ khbbs_result khbbs_boot(const khbbs_image *img, const char *path, const khbbs_bo
     }
 
     psp_cpu_reset();
+    psp_vfpu_reset();                   /* prefixes and the vrnd generator; the trap handler stays */
     memcpy(dst, path, n);
     psp_cpu.r[PSP_REG_A0] = (uint32_t)n;
     psp_cpu.r[PSP_REG_A1] = BOOT_ARGP;
